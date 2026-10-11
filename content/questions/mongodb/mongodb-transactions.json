@@ -1,0 +1,94 @@
+[
+  {
+    "slug": "mongodb-transactions-single-doc-atomic",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "difficulty": "easy",
+    "question": "Are MongoDB writes atomic? When do you actually need a transaction?",
+    "answer": "Every write to a **single document** is atomic, including its embedded arrays and sub-documents. So if you embed data that changes together (an order with its line items), you don't need a transaction. You need a **multi-document transaction** only when one logical operation must change several documents or collections all-or-nothing, like creating an order, decrementing stock and inserting a payment.",
+    "followUps": ["How would you decrement stock safely without a transaction?", "What does a transaction require in terms of deployment?"],
+    "tags": ["mongodb", "transactions", "atomicity"]
+  },
+  {
+    "slug": "mongodb-transactions-requirements",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "difficulty": "easy",
+    "question": "What are the requirements and limits of multi-document transactions in MongoDB?",
+    "answer": "They need a **replica set or sharded cluster** (not a standalone), and every operation must run in the same **session**. By default a transaction is aborted after **60 seconds** (`transactionLifetimeLimitSeconds`), and reads inside it must use read preference `primary`. They also cost more than single-document writes, so keep them short and small.",
+    "followUps": ["How do you run transactions in local development?", "What happens to a transaction during a primary election?"],
+    "tags": ["mongodb", "transactions"]
+  },
+  {
+    "slug": "mongodb-transactions-with-transaction-retries",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "difficulty": "medium",
+    "question": "What does session.withTransaction() do that a manual startTransaction/commitTransaction doesn't?",
+    "answer": "It starts the transaction, runs your callback, commits, and **retries automatically**: on a `TransientTransactionError` (write conflict, election, network issue) it **re-runs the whole callback**, and on `UnknownTransactionCommitResult` it **retries the commit**. If your callback throws any other error, it aborts and rethrows. Because the callback can run more than once, it must not contain non-repeatable side effects like sending emails.",
+    "explanation": "```js\nawait session.withTransaction(async () => {\n  await products.updateOne({ _id, stock: { $gte: qty } }, { $inc: { stock: -qty } }, { session });\n  await orders.insertOne(order, { session });\n});\n```",
+    "followUps": ["Why is retrying a commit safe?", "What is a write conflict?"],
+    "tags": ["mongodb", "transactions", "nodejs"]
+  },
+  {
+    "slug": "mongodb-transactions-write-concern",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "Write concern",
+    "difficulty": "medium",
+    "question": "Explain write concern: w:1, w:'majority', j:true and wtimeout.",
+    "answer": "Write concern says **when the server acknowledges a write**. `w: 1` = after the primary applies it (fast, but can be **rolled back** if the primary fails before replicating). `w: 'majority'` = after a majority of voting members have it, so it **survives failover**; it's the default for most deployments since 5.0. `j: true` = only after it's in the on-disk journal. `wtimeout` stops **waiting**, but doesn't undo the write, so the write may still succeed.",
+    "followUps": ["What is w:0 used for?", "What is a rollback in a replica set?"],
+    "tags": ["mongodb", "write-concern", "durability"]
+  },
+  {
+    "slug": "mongodb-transactions-read-concern",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "Read concern",
+    "difficulty": "medium",
+    "question": "What is read concern, and how do local, majority, snapshot and linearizable differ?",
+    "answer": "Read concern controls **how committed** the data you read must be. `local` (default) returns the node's latest data, which might later be rolled back. `majority` returns only majority-acknowledged data that **can't be rolled back**. `snapshot` gives a consistent point-in-time view and is used for transactions. `linearizable` guarantees you see every majority-acknowledged write that finished before the read started; it works only on the primary for single-document reads and is slow. `available` is like `local` but can return orphaned documents in sharded clusters.",
+    "followUps": ["Why is linearizable slower?", "Which read concern would you use for a bank balance?"],
+    "tags": ["mongodb", "read-concern", "consistency"]
+  },
+  {
+    "slug": "mongodb-transactions-read-preference",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "Read preference",
+    "difficulty": "medium",
+    "question": "What is read preference, and what is the risk of reading from secondaries?",
+    "answer": "Read preference chooses **which replica set member** serves reads: `primary` (default), `primaryPreferred`, `secondary`, `secondaryPreferred` or `nearest`. Secondaries replicate **asynchronously**, so they can lag, and you may get **stale reads**: a user places an order and doesn't see it in \"my orders\". It's fine for analytics or reports, but user-facing reads after writes should use `primary` or a causally consistent session.",
+    "followUps": ["What does maxStalenessSeconds do?", "Does reading from secondaries really scale writes?"],
+    "tags": ["mongodb", "read-preference", "replication"]
+  },
+  {
+    "slug": "mongodb-transactions-causal-consistency",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "Consistency",
+    "difficulty": "hard",
+    "question": "What is a causally consistent session, and which settings give the strongest guarantees?",
+    "answer": "A causally consistent session tracks the cluster time of your operations so that later reads in the session reflect earlier writes, even on a secondary: **read your writes, monotonic reads, monotonic writes and writes-follow-reads**. These guarantees fully hold only with `w: 'majority'` writes and `majority` read concern. For the strongest everyday guarantees: `w: 'majority'` (plus `j: true`), read concern `majority` (or `linearizable` for single-document reads), read preference `primary`, and transactions with `snapshot` when several documents must change together.",
+    "followUps": ["What does causal consistency cost?", "How does this relate to the CAP theorem?"],
+    "tags": ["mongodb", "consistency", "sessions"]
+  },
+  {
+    "slug": "mongodb-transactions-checkout-scenario",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "difficulty": "hard",
+    "question": "Scenario: design the checkout for an e-commerce store in MongoDB. Do you use a transaction?",
+    "answer": "First I'd ask whether a transaction is needed at all: embed line items, shipping address and status in the **order document**, and decrement stock with an **atomic conditional update** (`{ _id, stock: { $gte: qty } }` with `$inc`). If orders, stock and payments must stay in separate collections and be all-or-nothing, I'd use `session.withTransaction` with `w: 'majority'`, passing `{ session }` to every operation and throwing on insufficient stock to abort. I'd keep the transaction short: compute prices before it starts, and call the payment provider **outside** the callback, using an order status like `pending` → `paid` and an idempotency key so retries don't double-charge.",
+    "explanation": "Interviewers want to hear: single-document atomicity first, transactions when needed, short transactions, retries handled by withTransaction, and no external side effects inside the retryable callback.",
+    "followUps": ["What if the payment succeeds but the commit fails?", "How would this work across microservices (saga pattern)?"],
+    "tags": ["mongodb", "transactions", "design", "scenario"]
+  },
+  {
+    "slug": "mongodb-transactions-performance-cost",
+    "lessonSlug": "mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "difficulty": "medium",
+    "question": "Why should MongoDB transactions be kept short?",
+    "answer": "A transaction holds a **snapshot and locks** for its whole lifetime. Long transactions pin old data in the WiredTiger cache, increase **write conflicts** (which force retries), and are aborted after the **60-second** default limit. In sharded clusters, multi-shard transactions also need a two-phase commit. So validate and compute before starting, touch as few documents as possible, and never await slow external calls inside.",
+    "followUps": ["What happens when two transactions modify the same document?"],
+    "tags": ["mongodb", "transactions", "performance"]
+  }
+]

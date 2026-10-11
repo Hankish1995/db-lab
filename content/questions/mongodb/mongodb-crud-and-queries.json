@@ -1,0 +1,96 @@
+[
+  {
+    "slug": "mongodb-crud-and-queries-ordered-vs-unordered",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "easy",
+    "question": "What is the difference between an ordered and an unordered insertMany?",
+    "answer": "**Ordered** (the default) inserts documents in sequence and **stops at the first error**, e.g. a duplicate key. **Unordered** (`{ ordered: false }`) **continues past errors** and reports them all at the end, and can be faster for bulk loads. In both cases, documents already inserted **stay inserted**: insertMany is not a transaction.",
+    "followUps": ["How would you make a batch insert all-or-nothing?", "Which one would you use to import a CSV with possible duplicates?"],
+    "tags": ["mongodb", "crud", "insert"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-elemmatch",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "medium",
+    "question": "When do you need $elemMatch? Show the bug it prevents.",
+    "answer": "Use `$elemMatch` when **several conditions must be true for the same array element**. Without it, MongoDB checks each condition against the array independently, so different elements can satisfy different conditions. `{ \"items.sku\": \"MUG-01\", \"items.qty\": { $gte: 5 } }` matches an order with 1 mug and 5 T-shirts; `{ items: { $elemMatch: { sku: \"MUG-01\", qty: { $gte: 5 } } } }` only matches if one line item is a mug with qty ≥ 5.",
+    "explanation": "Same trap with scalar arrays: `{ scores: { $gt: 5, $lt: 10 } }` matches `[2, 12]` because 12 > 5 and 2 < 10. `{ scores: { $elemMatch: { $gt: 5, $lt: 10 } } }` requires one element between 5 and 10.",
+    "followUps": ["Do you need $elemMatch for a single condition?", "How does $all differ from an exact array match?"],
+    "tags": ["mongodb", "queries", "arrays", "elemmatch"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-sort-skip-limit",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "easy",
+    "question": "In what order are sort, skip and limit applied, and why is a large skip a problem?",
+    "answer": "The server always applies **sort, then skip, then limit**, regardless of the order you chain them in the cursor. A large `skip` is slow because the server still **walks past every skipped document**, so page 10,000 costs far more than page 1. For deep pagination use **range-based (keyset) pagination**: filter on the last seen sort value plus `_id` as a tie-breaker, with a matching index.",
+    "explanation": "```js\n// page after the last item seen\ndb.products.find({ $or: [\n  { price: { $gt: lastPrice } },\n  { price: lastPrice, _id: { $gt: lastId } }\n] }).sort({ price: 1, _id: 1 }).limit(20)\n```",
+    "followUps": ["What index supports that pagination query?"],
+    "tags": ["mongodb", "queries", "pagination"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-update-vs-replace",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "easy",
+    "question": "What is the difference between updateOne and replaceOne?",
+    "answer": "`updateOne` takes **update operators** (`$set`, `$inc`, `$push`…) and changes only the named fields; everything else is kept. `replaceOne` takes a **plain document** and replaces the entire document, keeping only `_id`. Passing a plain object to `updateOne` is an error in mongosh and the drivers (\"Update document requires atomic operators\"); Mongoose hides this by wrapping plain objects in `$set`.",
+    "followUps": ["When is replaceOne actually the right choice?"],
+    "tags": ["mongodb", "crud", "update"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-array-update-operators",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "medium",
+    "question": "How do you update elements inside an array? Explain $, $[] and arrayFilters.",
+    "answer": "The positional **`$`** updates the **first element that matched the query filter** (`\"items.$.qty\"`). **`$[]`** updates **every** element. **`$[name]` with `arrayFilters`** updates **all elements that match a condition** you specify separately. For appending and removing, use `$push` (with `$each`/`$slice` to cap the array), `$addToSet`, `$pull` and `$pop`.",
+    "explanation": "```js\n// mark every T-shirt line as backordered\ndb.orders.updateMany(\n  { \"items.sku\": \"TEE-01\" },\n  { $set: { \"items.$[it].status\": \"backordered\" } },\n  { arrayFilters: [{ \"it.sku\": \"TEE-01\" }] }\n)\n\n// keep only the last 10 viewed products\ndb.users.updateOne({ _id: uid },\n  { $push: { recentlyViewed: { $each: [pid], $slice: -10 } } })\n```",
+    "followUps": ["What's the difference between $push and $addToSet?", "Why does $ only update one element?"],
+    "tags": ["mongodb", "update", "arrays"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-upsert",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "medium",
+    "question": "What is an upsert and what can go wrong with it under concurrency?",
+    "answer": "An **upsert** (`{ upsert: true }`) updates the matching document or, if none matches, **inserts** a new one built from the filter's equality fields plus the update; `$setOnInsert` sets fields only on that insert. Under concurrency, two upserts with the same filter can **both** find nothing and both insert, creating duplicates. The fix is a **unique index** on the filter field: only one insert can win. If the filter is an equality match on the indexed field(s) and the update doesn't change them, the server retries the loser as an update automatically; otherwise it gets an `E11000` duplicate-key error that the application should retry.",
+    "followUps": ["What does $setOnInsert do?", "How would you implement 'get or create cart' safely?"],
+    "tags": ["mongodb", "update", "upsert", "concurrency"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-count-methods",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "easy",
+    "question": "countDocuments vs estimatedDocumentCount: which would you use and when?",
+    "answer": "`countDocuments(filter)` runs a real query, so it's **exact** and supports a filter but costs time proportional to the matched data. `estimatedDocumentCount()` reads **collection metadata**, so it's near-instant but takes **no filter** and can be slightly off (for example after an unclean shutdown or with orphaned documents in a sharded cluster). Use the estimate for dashboards, the exact count for user-facing numbers.",
+    "followUps": ["Why was the old count() deprecated?"],
+    "tags": ["mongodb", "queries", "count"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-overselling-scenario",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "hard",
+    "question": "Scenario: during a flash sale you sold 130 units of a product that had only 100 in stock. The code does findOne, checks stock > 0, then updateOne with $inc: -1. What's wrong and how do you fix it?",
+    "answer": "It's a **check-then-act race**: concurrent requests all read the same stock value before any of them writes, so they all pass the check. The fix is to make the check part of a **single atomic update**: put `stock: { $gte: qty }` in the **filter** and `$inc: { stock: -qty }` in the update. Single-document writes are atomic, so if `matchedCount` is 0 (or `findOneAndUpdate` returns `null`), the item is sold out and you reject the order.",
+    "explanation": "```js\nconst res = await db.collection('products').findOneAndUpdate(\n  { _id: productId, stock: { $gte: qty } },\n  { $inc: { stock: -qty } },\n  { returnDocument: 'after' }\n)\nif (!res) throw new Error('Out of stock')\n```\n(With the Node driver v6+, `findOneAndUpdate` returns the document directly by default.) If decrementing stock and creating the order must succeed or fail together, wrap both in a **transaction**, or design so the order can be compensated if the second step fails.",
+    "followUps": ["What if the order spans several products?", "Would a transaction alone have fixed the race?"],
+    "tags": ["mongodb", "atomicity", "concurrency", "scenario"]
+  },
+  {
+    "slug": "mongodb-crud-and-queries-ne-and-null",
+    "lessonSlug": "mongodb-crud-and-queries",
+    "topic": "CRUD and queries",
+    "difficulty": "medium",
+    "question": "What does { status: null } match? And { status: { $ne: \"cancelled\" } }?",
+    "answer": "`{ status: null }` matches documents where `status` is **null or missing**; use `{ status: { $type: \"null\" } }` for explicit nulls only, or `$exists` to test presence. `{ status: { $ne: \"cancelled\" } }` matches every document whose status isn't \"cancelled\", **including documents with no status field at all**. The same applies to `$nin`. These are frequent sources of reports that count \"ghost\" documents.",
+    "followUps": ["Are $ne queries efficient with an index?"],
+    "tags": ["mongodb", "queries", "operators"]
+  }
+]

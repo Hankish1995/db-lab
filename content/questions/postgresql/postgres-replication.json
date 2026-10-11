@@ -1,0 +1,97 @@
+[
+  {
+    "slug": "postgres-replication-streaming-basics",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "How does streaming replication work in PostgreSQL?",
+    "answer": "Every change is first written to the **WAL**. With **physical streaming replication**, the primary's walsender streams WAL records to each standby's walreceiver, and the standby **replays** them, staying permanently in recovery mode. The standby is a block-level copy of the whole cluster on the same major version, and with **hot standby** it serves read-only queries. It's used for high availability and read scaling, not for more write capacity.",
+    "followUps": ["How do you create a new standby?", "How do you measure how far behind a standby is?"],
+    "tags": ["postgresql", "replication", "wal"]
+  },
+  {
+    "slug": "postgres-replication-not-a-backup",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "Is a replica a backup? What are RPO and RTO?",
+    "answer": "No. A replica copies **every change, including mistakes**: an accidental `DELETE FROM orders` is replayed on standbys within milliseconds. Backups (a base backup plus archived WAL) let you restore to a point **before** the mistake. **RPO** is how much data you can afford to lose, measured in time; **RTO** is how long you can afford to be down. Replication mostly improves RTO; backups and sync replication determine RPO.",
+    "followUps": ["What is point-in-time recovery?", "What RPO does asynchronous replication give you?"],
+    "tags": ["postgresql", "backups", "rpo", "rto"]
+  },
+  {
+    "slug": "postgres-replication-async-vs-sync",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "What is the difference between asynchronous and synchronous replication in PostgreSQL?",
+    "answer": "With **asynchronous** replication (the default) the primary acknowledges a commit once its own WAL is flushed and ships WAL afterwards, so it's fast, but a primary crash can lose the last commits on failover. With **synchronous** replication (`synchronous_standby_names` set, `synchronous_commit = on`) the commit waits until a standby has flushed the WAL, so there's no data loss on failover, at the cost of a network round trip per commit. And if no synchronous standby is available, commits **hang**.",
+    "explanation": "`synchronous_commit` levels: `off`, `local`, `remote_write` (standby wrote to OS), `on` (standby flushed to disk), `remote_apply` (standby replayed it, so it's visible to reads there). Use `ANY 1 (s1, s2)` with two standbys so one failure doesn't block writes. The setting can be changed per transaction with `SET LOCAL synchronous_commit`.",
+    "followUps": ["What does remote_apply guarantee?", "How do you avoid writes hanging when a sync standby dies?"],
+    "tags": ["postgresql", "replication", "synchronous-commit"]
+  },
+  {
+    "slug": "postgres-replication-read-your-writes",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "A user updates their address, refreshes, and sees the old one. You use read replicas. What's happening and how do you fix it?",
+    "answer": "**Replication lag**: the write went to the primary but the next read hit an async replica that hadn't replayed it yet, a **read-your-writes** violation. Fixes: read from the **primary** for that user's own data or for a few seconds after a write (sticky routing), or record the primary's LSN after the write (`pg_current_wal_lsn()`) and only use a replica whose `pg_last_wal_replay_lsn()` has passed it. `synchronous_commit = remote_apply` also guarantees it on synchronous standbys, at a latency cost.",
+    "explanation": "Keep replicas for reads that tolerate staleness: product listings, search, reports. Monitor lag with `replay_lag` in `pg_stat_replication`.",
+    "followUps": ["How do you monitor replication lag?", "Why might a long report on a replica get cancelled?"],
+    "tags": ["postgresql", "replication", "replication-lag", "scenario"]
+  },
+  {
+    "slug": "postgres-replication-slots",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "What is a replication slot, and what's the danger of using one?",
+    "answer": "A **replication slot** makes the primary **keep all WAL** that its consumer (a standby or a logical replication/CDC client) hasn't confirmed yet, so the consumer can always catch up after a disconnect. The danger: if the consumer disappears, the **abandoned slot** keeps WAL forever, `pg_wal` grows until the **disk fills** and the primary stops. Monitor `pg_replication_slots` (`active`, retained WAL), drop unused slots, and set `max_slot_wal_keep_size` as a safety limit.",
+    "followUps": ["What happens to a standby without a slot that falls too far behind?"],
+    "tags": ["postgresql", "replication", "replication-slots", "wal"]
+  },
+  {
+    "slug": "postgres-replication-logical-vs-physical",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "Logical vs physical replication: when would you use each?",
+    "answer": "**Physical** replication streams raw WAL, producing a read-only, exact copy of the **whole cluster** on the same major version: use it for HA and read replicas. **Logical** replication sends decoded **row changes** for chosen tables via **publications** and **subscriptions**, to a normal writable database that may run a **different major version**: use it for low-downtime upgrades, copying a subset of tables, or CDC. Logical replication doesn't replicate DDL, and tables need a primary key or replica identity for updates and deletes.",
+    "followUps": ["How would you upgrade PostgreSQL 15 to 17 with minimal downtime?", "What does wal_level need to be for logical replication?"],
+    "tags": ["postgresql", "logical-replication", "replication"]
+  },
+  {
+    "slug": "postgres-replication-failover",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "Does PostgreSQL fail over automatically? What is split-brain and how is it prevented?",
+    "answer": "No. PostgreSQL can **promote** a standby (`pg_promote()`), but it doesn't detect failures or elect a new primary. Tools like **Patroni** (with etcd/Consul as a consensus store holding a leader lock) or managed services do that. **Split-brain** is two nodes both acting as primary, typically when an old primary was only cut off and comes back, so writes diverge. It's prevented by **consensus** (only the leader-lock holder may be primary) and **fencing**: the old primary demotes itself when it loses the lock, or is shut off, then rejoins as a standby, often via `pg_rewind`.",
+    "explanation": "Contrast with MongoDB replica sets, where elections and majority voting are built into the server. In PostgreSQL the app should connect through a stable endpoint (DNS, virtual IP, HAProxy, or the cloud endpoint) that follows the primary, and retry on connection errors.",
+    "followUps": ["How does your application find the new primary?", "Why is an odd number of etcd nodes recommended?"],
+    "tags": ["postgresql", "failover", "patroni", "split-brain", "high-availability"]
+  },
+  {
+    "slug": "postgres-replication-pitr",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "At 14:30 someone ran DELETE FROM orders without a WHERE clause in production. How do you recover?",
+    "answer": "Replicas won't help, because the delete has already replicated. With **base backups and WAL archiving** you do **point-in-time recovery**: restore the latest base backup taken before 14:30 to a new server, set `recovery_target_time` to just before the delete (e.g. 14:29:00), and let PostgreSQL replay archived WAL up to that point. Then either fail over to it or copy the missing `orders` rows back into production. With only a nightly `pg_dump`, you could lose up to a day of data, which is why PITR (via pgBackRest, Barman, WAL-G or a managed service) is the production standard.",
+    "explanation": "Afterwards: restrict who can run ad-hoc writes in production, and practise restores regularly. A backup you never restored is a hope, not a backup.",
+    "followUps": ["What's the difference between pg_dump and pg_basebackup?", "What RPO and RTO does this setup give?"],
+    "tags": ["postgresql", "backups", "pitr", "scenario"]
+  },
+  {
+    "slug": "postgres-replication-design-ha",
+    "lessonSlug": "postgres-replication",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "Design a highly available PostgreSQL setup for an e-commerce checkout that must not lose paid orders.",
+    "answer": "One primary and **two standbys** in different availability zones, managed by **Patroni** with a 3-node etcd cluster (or a managed service with the same guarantees). Use **synchronous replication** with `synchronous_standby_names = 'ANY 1 (s1, s2)'`, so every paid order is on at least two machines and a single standby outage doesn't block writes. The app connects through an endpoint that follows the leader and retries idempotent operations. Add **pgBackRest** base backups with continuous WAL archiving to object storage for PITR, alerts on replication lag and slots, and regular failover and restore drills.",
+    "explanation": "Trade-offs to mention: sync replication adds commit latency, so you can relax it per transaction (`SET LOCAL synchronous_commit = local`) for low-value writes like analytics events. Cross-region sync replication is usually too slow, so a remote region often gets an async standby for disaster recovery, with a non-zero RPO.",
+    "followUps": ["What happens if both standbys go down?", "Where would you send read traffic?"],
+    "tags": ["postgresql", "high-availability", "system-design", "scenario"]
+  }
+]

@@ -1,0 +1,63 @@
+[
+  {
+    "slug": "what-is-sharding",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "easy",
+    "question": "What is sharding and why do we need it?",
+    "answer": "Sharding is **horizontal partitioning** of data across multiple servers. Each shard holds a subset of the data, chosen by a **shard key**. We use it when a single server can't handle the **data size** or the **write throughput**: it scales storage and writes horizontally instead of buying an ever-bigger machine.",
+    "followUps": ["How is it different from replication?", "When would you NOT shard?"],
+    "tags": ["sharding", "scaling"]
+  },
+  {
+    "slug": "choose-shard-key",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "medium",
+    "question": "How do you choose a good shard key?",
+    "answer": "A good shard key has **high cardinality**, distributes **reads and writes evenly**, and is present in **most queries** so they are targeted rather than scatter-gather. Avoid **monotonically increasing** keys (timestamps, auto-increment IDs, ObjectId) with ranged sharding, because every new write goes to the same shard. Use hashed sharding or a compound key such as `{ customerId: 1, orderDate: 1 }`.",
+    "explanation": "Example: sharding `orders` by `createdAt` sends every new order to the shard holding the newest range — a **hot shard**. Sharding by `customerId` (hashed) spreads writes, and \"orders of customer X\" stays a targeted query.",
+    "followUps": ["What is a hot shard?", "What happens if you pick the wrong shard key?", "Ranged vs hashed sharding?"],
+    "tags": ["sharding", "shard-key"]
+  },
+  {
+    "slug": "sharding-vs-replication",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "easy",
+    "question": "What is the difference between sharding and replication?",
+    "answer": "**Sharding** splits *different* data across machines, for **scale**. **Replication** copies the *same* data across machines, for **availability** and read scaling. Production clusters use both: each shard is itself a replica set.",
+    "followUps": ["And how is partitioning different from both?"],
+    "tags": ["sharding", "replication"]
+  },
+  {
+    "slug": "scatter-gather-query",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "medium",
+    "question": "What is a scatter-gather query in a sharded cluster?",
+    "answer": "A query that **doesn't include the shard key**, so the router (`mongos`) can't tell which shard holds the data. It sends the query to **all shards** and merges the results, so it gets slower as you add shards. Queries that include the shard key are **targeted** to one shard.",
+    "followUps": ["How would you avoid scatter-gather for a frequent query?"],
+    "tags": ["sharding", "performance"]
+  },
+  {
+    "slug": "ranged-vs-hashed-sharding",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "medium",
+    "question": "Ranged vs hashed sharding: when would you use each?",
+    "answer": "**Ranged** keeps nearby key values together, so **range queries** are targeted, but increasing keys create a **hot shard**. **Hashed** scatters values evenly, so **writes are balanced**, but range queries become scatter-gather. Use hashed for write-heavy keys that are only looked up by exact value; use ranged when you query by ranges and the key isn't monotonically increasing.",
+    "followUps": ["Can you change the shard key later?"],
+    "tags": ["sharding", "shard-key"]
+  },
+  {
+    "slug": "sharding-problems",
+    "lessonSlug": "sharding",
+    "topic": "Sharding",
+    "difficulty": "hard",
+    "question": "What problems does sharding introduce?",
+    "answer": "Operational complexity (config servers, routers, a balancer), **scatter-gather** queries, slower **cross-shard transactions** and joins (`$lookup`), **unique indexes** that must include the shard key, **jumbo chunks** when one key value is huge, and very expensive **resharding** if the shard key was chosen badly.",
+    "followUps": ["What would you try before sharding?"],
+    "tags": ["sharding", "trade-offs"]
+  }
+]

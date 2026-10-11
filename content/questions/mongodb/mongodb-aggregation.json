@@ -1,0 +1,96 @@
+[
+  {
+    "slug": "mongodb-aggregation-what-is-pipeline",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "easy",
+    "question": "What is the aggregation pipeline in MongoDB?",
+    "answer": "It's an **ordered array of stages** that documents flow through, like an assembly line. Each stage (`$match`, `$group`, `$sort`, `$lookup`…) transforms the documents it receives and passes its output to the next stage. It runs inside the database, so you get computed answers like \"revenue per category\" without pulling raw documents into your app.",
+    "followUps": ["How is it different from find()?", "Which stages can use indexes?"],
+    "tags": ["mongodb", "aggregation"]
+  },
+  {
+    "slug": "mongodb-aggregation-match-early",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "easy",
+    "question": "Why should $match usually be the first stage of a pipeline?",
+    "answer": "Only the **beginning of the pipeline** can use indexes, because later stages work on transformed, in-memory documents. A leading `$match` (and `$sort`) can use an index **and** reduces how many documents every later stage has to process. MongoDB's optimizer moves some `$match` stages forward automatically, but not ones that depend on computed fields, so write it early yourself and confirm with `explain()`.",
+    "followUps": ["What does the optimizer reorder for you?", "How do you check whether a pipeline used an index?"],
+    "tags": ["mongodb", "aggregation", "performance", "indexes"]
+  },
+  {
+    "slug": "mongodb-aggregation-unwind",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "What does $unwind do, and what is preserveNullAndEmptyArrays for?",
+    "answer": "`$unwind` turns one document with an N-element array into **N documents**, one per element, so you can group or filter by array items (for example, order line items). By default it **drops** documents whose array is missing, null or empty. `preserveNullAndEmptyArrays: true` keeps those documents, which matters when you'd otherwise silently lose, say, orders with no items from a count.",
+    "explanation": "```js\n{ $unwind: { path: '$items', preserveNullAndEmptyArrays: true } }\n```\nAlso watch out: unwinding big arrays multiplies the number of documents flowing through the pipeline.",
+    "followUps": ["What is includeArrayIndex?", "How else can you work with arrays without unwinding ($filter, $map, $reduce)?"],
+    "tags": ["mongodb", "aggregation", "arrays"]
+  },
+  {
+    "slug": "mongodb-aggregation-group-accumulators",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "Write a pipeline that returns total revenue per product category for paid orders, where orders embed an items array with qty and price.",
+    "answer": "Filter, unwind the items, group by category and sum `qty * price`, then sort. In SQL this is a `JOIN order_items ... GROUP BY category`; in MongoDB `$unwind` replaces the join because the items are embedded.",
+    "explanation": "```js\ndb.orders.aggregate([\n  { $match: { status: 'paid' } },\n  { $unwind: '$items' },\n  { $group: {\n      _id: '$items.category',\n      revenue: { $sum: { $multiply: ['$items.qty', '$items.price'] } },\n      unitsSold: { $sum: '$items.qty' }\n  } },\n  { $sort: { revenue: -1 } }\n])\n```",
+    "followUps": ["How would you get the top 3 products per category?", "What's the difference between $push and $addToSet?"],
+    "tags": ["mongodb", "aggregation", "group"]
+  },
+  {
+    "slug": "mongodb-aggregation-lookup",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "How does $lookup work, and what are its performance pitfalls?",
+    "answer": "`$lookup` is a **left outer join** to another collection in the same database: for each input document it finds matching documents and puts them in an **array** field. The simple form matches `localField` to `foreignField`; the pipeline form uses `let` and a sub-pipeline for extra conditions, sorting or limits. Pitfalls: it runs **per input document**, so index the foreign field and `$match` first; the result is always an array (use `$unwind` or `$first`); and if you need it on every request, the data may belong embedded.",
+    "followUps": ["$lookup vs Mongoose populate?", "When would you embed instead of joining?"],
+    "tags": ["mongodb", "aggregation", "lookup", "joins"]
+  },
+  {
+    "slug": "mongodb-aggregation-group-vs-window",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "What is $setWindowFields and how is it different from $group?",
+    "answer": "`$setWindowFields` brings **SQL window functions** to MongoDB: running totals, moving averages, `$rank`, `$denseRank`. `$group` **collapses** each group into one document, while `$setWindowFields` **keeps every document** and adds a computed field based on a window of neighbouring documents, optionally restarting per `partitionBy` group.",
+    "explanation": "Running total of monthly revenue:\n```js\n{ $setWindowFields: {\n    sortBy: { month: 1 },\n    output: { running: { $sum: '$revenue', window: { documents: ['unbounded', 'current'] } } }\n} }\n```",
+    "followUps": ["How would you compute a 7-day moving average?", "How would you rank customers by spend?"],
+    "tags": ["mongodb", "aggregation", "window-functions"]
+  },
+  {
+    "slug": "mongodb-aggregation-memory-limit",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "What memory limits apply to aggregation, and what does allowDiskUse do?",
+    "answer": "Each **blocking stage** like `$group` or `$sort` can use about **100 MB** of RAM. Beyond that it must **spill to temporary files on disk**, which `allowDiskUse` controls; since MongoDB 6.0 the `allowDiskUseByDefault` server parameter is `true`, so spilling happens automatically unless you pass `allowDiskUse: false`. Separately, every output document is still limited to **16 MB**, so a huge `$push` can fail regardless.",
+    "followUps": ["How would you reduce memory usage of a $group?", "Why can $sort + $limit use less memory than $sort alone?"],
+    "tags": ["mongodb", "aggregation", "memory"]
+  },
+  {
+    "slug": "mongodb-aggregation-out-vs-merge",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "medium",
+    "question": "What is the difference between $out and $merge?",
+    "answer": "Both write pipeline results to a collection and must be the **last stage**. `$out` **replaces** the entire target collection. `$merge` **merges** results into an existing collection document by document, with options like `whenMatched: 'replace' | 'merge' | 'keepExisting'` and `whenNotMatched: 'insert' | 'discard'`. That makes `$merge` the tool for incrementally maintained **materialized views**.",
+    "followUps": ["How would you refresh a daily sales report incrementally?"],
+    "tags": ["mongodb", "aggregation", "materialized-views"]
+  },
+  {
+    "slug": "mongodb-aggregation-slow-dashboard-scenario",
+    "lessonSlug": "mongodb-aggregation",
+    "topic": "Aggregation",
+    "difficulty": "hard",
+    "question": "Scenario: an admin dashboard runs five separate aggregations over 50 million orders on every page load and takes 8 seconds. How do you fix it?",
+    "answer": "First **measure** with `explain('executionStats')` on each pipeline: make sure each starts with a `$match` on an indexed field (for example `{ status: 1, createdAt: 1 }`) so it doesn't scan everything. Then reduce work: combine reports that share the same filter into **one `$facet`** so the input is read once. The bigger fix is to **stop recomputing history on every request**: precompute daily or hourly rollups with a scheduled `$merge` into a summary collection, or keep counters updated with `$inc` at write time, and have the dashboard read the small summary. If it still hurts, run reports on a secondary or analytics node with `secondaryPreferred` and accept slightly stale data.",
+    "explanation": "Dashboards rarely need second-level freshness. Turning \"aggregate 50M docs per page view\" into \"aggregate today's new orders every 5 minutes\" changes the cost by orders of magnitude.",
+    "followUps": ["What are the risks of reading from secondaries?", "How would you keep the rollup correct if old orders are refunded?"],
+    "tags": ["mongodb", "aggregation", "performance", "scenario"]
+  }
+]

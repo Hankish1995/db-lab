@@ -1,0 +1,94 @@
+[
+  {
+    "slug": "mongoose-in-practice-schema-model-document",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "easy",
+    "question": "What is the difference between a Schema, a Model and a Document in Mongoose?",
+    "answer": "A **Schema** defines the shape and rules: field types, validators, defaults, indexes, hooks and virtuals. A **Model** is the class compiled from a schema with `model('Order', orderSchema)` and bound to a collection; it has static query methods like `find` and `create`. A **Document** is one instance of a model, a hydrated object with change tracking and methods like `save()`.",
+    "followUps": ["What does InferSchemaType give you in TypeScript?", "What is hydration?"],
+    "tags": ["mongoose", "nodejs"]
+  },
+  {
+    "slug": "mongoose-in-practice-update-validation",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "medium",
+    "question": "Does Mongoose validation run on updateOne or findOneAndUpdate?",
+    "answer": "Not by default. Validators always run on `save()` and `create()`, but update queries **skip validation** unless you pass `runValidators: true`. Even then, update validators only check **the paths in the update**, `required` only fails on `$unset` or `null`, `this` isn't the document, and only some operators are validated (`$set`, `$unset`, `$push`, `$addToSet`, `$pull`, `$pullAll`), so `$inc` can push a value below `min`. Update queries also don't trigger `save` middleware.",
+    "explanation": "```js\nawait Product.updateOne({ sku }, { $set: { price: -5 } }, { runValidators: true }); // ValidationError\n```\nFor `$inc`, guard in the filter: `{ _id, stock: { $gte: qty } }`.",
+    "followUps": ["How would you enforce a rule no matter which app writes?", "How can you enable runValidators for all findOneAndUpdate calls?"],
+    "tags": ["mongoose", "validation"]
+  },
+  {
+    "slug": "mongoose-in-practice-middleware-this",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "medium",
+    "question": "What is the difference between document middleware and query middleware in Mongoose?",
+    "answer": "**Document middleware** (`save`, `validate`, and `deleteOne`/`updateOne` with `{ document: true }`) runs on a document, so `this` is the **document** and you can read fields like `this.total`. **Query middleware** (`find`, `findOneAndUpdate`, `updateOne`, `deleteMany`…) runs on a query, so `this` is the **Query**; you use `this.getFilter()`, `this.getUpdate()` or `this.setOptions()`. A common bug is putting logic in `pre('save')` and then updating with `findByIdAndUpdate`, which never triggers it.",
+    "followUps": ["How do you modify the update inside pre('findOneAndUpdate')?", "Which hooks does insertMany trigger?"],
+    "tags": ["mongoose", "middleware"]
+  },
+  {
+    "slug": "mongoose-in-practice-lean",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "easy",
+    "question": "What does lean() do and when should you use it?",
+    "answer": "`lean()` makes a query return **plain JavaScript objects** instead of hydrated Mongoose documents. It skips hydration and change tracking, so it's faster and uses less memory, but you lose **virtuals, getters/setters and `save()`**. Use it for read-only endpoints like listing orders; use full documents when you'll modify and save.",
+    "followUps": ["How do you include virtuals with lean?", "How do you type a lean result in TypeScript?"],
+    "tags": ["mongoose", "performance"]
+  },
+  {
+    "slug": "mongoose-in-practice-populate-vs-lookup",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "medium",
+    "question": "How does populate() work, and how does it compare to $lookup?",
+    "answer": "`populate()` is **not a database join**: Mongoose runs the main query, collects the referenced ids, runs **another query** with `$in`, and stitches results together **in Node.js**, so it's one extra query per populated path. It's easy to use but can't filter or sort by joined fields well. `$lookup` joins **inside MongoDB** in a single aggregation. The **N+1 problem** appears when you populate inside a loop per document instead of once on the query.",
+    "followUps": ["When would you embed data instead of populating?", "What is the N+1 query problem?"],
+    "tags": ["mongoose", "populate", "lookup"]
+  },
+  {
+    "slug": "mongoose-in-practice-version-key",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "hard",
+    "question": "What does __v protect against in Mongoose? How do you get optimistic concurrency control?",
+    "answer": "By default `__v` only protects **array positions** with `save()`: when a save changes an array in a way that can shift indexes, Mongoose bumps `__v`, and a later save that edits an element by position with a stale `__v` fails with a `VersionError`. It does **not** stop two saves from overwriting each other's plain field changes. Setting the schema option `optimisticConcurrency: true` makes **every** `save()` check and increment `__v`. Neither applies to `updateOne`/`findOneAndUpdate`; for those, use atomic operators with conditions in the filter.",
+    "explanation": "```js\nconst schema = new Schema({ status: String }, { optimisticConcurrency: true });\n// two loaded copies: first save wins, second throws VersionError\n```",
+    "followUps": ["How would you safely move an order from pending to paid with updateOne?"],
+    "tags": ["mongoose", "concurrency", "versioning"]
+  },
+  {
+    "slug": "mongoose-in-practice-strict-strictquery",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "medium",
+    "question": "What is the difference between strict and strictQuery in Mongoose?",
+    "answer": "`strict` (default `true`) controls **writes**: fields not in the schema are silently dropped when you create or update (or rejected with `strict: 'throw'`). `strictQuery` controls **filters**; since Mongoose 7 it defaults to `false`, so unknown filter fields are passed to MongoDB. That's safer for typos: with `strictQuery: true`, `deleteMany({ stauts: 'x' })` would strip the unknown field and delete **everything**. Either way, never pass raw `req.query` into filters.",
+    "followUps": ["What is query selector injection?", "What does sanitizeFilter do?"],
+    "tags": ["mongoose", "schema", "security"]
+  },
+  {
+    "slug": "mongoose-in-practice-production-setup",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "medium",
+    "question": "How should you handle connections and indexes with Mongoose in production?",
+    "answer": "**Connect once** at startup and reuse the built-in connection pool (`maxPoolSize`, driver default 100); never connect per request. In serverless functions, cache the connection promise globally and keep the pool small to avoid exhausting the cluster's connection limit. Disable **`autoIndex`** in production, because it builds indexes at app startup, and create indexes deliberately in a deploy or migration step with `Model.createIndexes()`.",
+    "followUps": ["What does syncIndexes do differently?", "How do you size maxPoolSize?"],
+    "tags": ["mongoose", "production", "connections", "indexes"]
+  },
+  {
+    "slug": "mongoose-in-practice-debug-scenario",
+    "lessonSlug": "mongoose-in-practice",
+    "topic": "Mongoose",
+    "difficulty": "hard",
+    "question": "Scenario: an order's total is sometimes wrong, some products have negative stock, and GET /orders/abc crashes with a 500. Your schema has min: 0 on stock and computes total in pre('save'). What's going on?",
+    "answer": "Three separate Mongoose gotchas. **Wrong totals**: some code path updates items with `findByIdAndUpdate`/`updateOne`, which **doesn't run `save` hooks**, so total isn't recomputed; move the logic to a shared service or also handle it in query middleware. **Negative stock**: `$inc` is **not checked by update validators** (and updates skip validation without `runValidators` anyway); guard the update atomically with `{ _id, stock: { $gte: qty } }`. **The 500**: `findById('abc')` throws a **`CastError`**; validate with `mongoose.isObjectIdOrHexString` and return 400.",
+    "followUps": ["How would you add a database-level guarantee for stock?", "How would you test for these bugs?"],
+    "tags": ["mongoose", "debugging", "scenario"]
+  }
+]

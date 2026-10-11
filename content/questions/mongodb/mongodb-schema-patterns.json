@@ -1,0 +1,96 @@
+[
+  {
+    "slug": "mongodb-schema-patterns-computed",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "easy",
+    "question": "What is the computed pattern? Give an example.",
+    "answer": "The **computed pattern** pre-calculates a value **on write** and stores it, instead of computing it on every read. Example: each product stores `ratingCount` and `ratingSum` (or `ratingAvg`), updated with `$inc` when a review is added, so the product page doesn't aggregate thousands of reviews per view. It pays off when reads vastly outnumber writes; the cost is extra write work and the risk of drift if some write path forgets to update it.",
+    "followUps": ["How would you detect and repair drift in a computed field?"],
+    "tags": ["mongodb", "schema-patterns", "computed"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-subset",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "medium",
+    "question": "What is the subset pattern and how would you implement 'latest 10 reviews on the product page'?",
+    "answer": "The **subset pattern** embeds only the **frequently used slice** of a large related set, while the full set lives in its own collection. All reviews go into `reviews` with `productId`; the product keeps `recentReviews` capped at 10 using `$push` with `$each`, `$position: 0` and `$slice: 10`. The product page is one read, and \"see all reviews\" pages through the `reviews` collection with an index on `{ productId: 1, createdAt: -1 }`.",
+    "explanation": "```js\ndb.products.updateOne({ _id: pid }, {\n  $push: { recentReviews: { $each: [review], $position: 0, $slice: 10 } }\n})\n```\nThe cost: two writes per review, and edits or deletes must also update the embedded copy if it's in the subset.",
+    "followUps": ["Do the two writes need a transaction?", "How is this different from the extended reference pattern?"],
+    "tags": ["mongodb", "schema-patterns", "subset"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-bucket-vs-timeseries",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "medium",
+    "question": "Explain the bucket pattern. Would you still hand-roll it today?",
+    "answer": "The **bucket pattern** groups many small time-based records into one document per time window (e.g. one document per product per hour holding that hour's page views), with a **size cap** so buckets stay bounded. It cuts the number of documents and index entries and makes range reads cheap. For plain measurements over time, I'd use a **time series collection** instead: MongoDB does the bucketing internally, with compression, and you insert one document per event.",
+    "explanation": "```js\ndb.createCollection(\"productViews\", {\n  timeseries: { timeField: \"at\", metaField: \"productId\", granularity: \"minutes\" }\n})\n```\nHand-rolled buckets still make sense when you need custom per-bucket fields or update semantics that time series collections don't fit.",
+    "followUps": ["Why does the bucket need a size cap?", "What is the metaField used for?"],
+    "tags": ["mongodb", "schema-patterns", "bucket", "time-series"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-extended-reference",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "medium",
+    "question": "What is the extended reference pattern, and what are its risks?",
+    "answer": "You keep the reference (`customer._id`) **plus a copy of the few fields you always display**, such as the customer's name and the shipping address in an order. It removes a `$lookup` on the hot path, and for orders the copy is actually the correct snapshot. The risk is **stale duplicates**: only copy fields that rarely change or that should be frozen, and have a plan (a background update) if they must sync.",
+    "followUps": ["Which user fields would you never copy into orders?"],
+    "tags": ["mongodb", "schema-patterns", "extended-reference"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-outlier",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "hard",
+    "question": "Scenario: 99.9% of your products have fewer than 500 reviews, but a few viral products have millions and their documents are approaching 16 MB. How do you fix it without redesigning everything?",
+    "answer": "Apply the **outlier pattern**: keep the normal design for the common case, and **flag** the rare huge documents (`hasOverflow: true`) so their extra data spills into **overflow documents** (e.g. pages of 500 review IDs keyed by `productId` and `page`). Only the flagged products pay for the extra lookups, and the app branches on the flag. If outliers turn out not to be rare, the base design is wrong and I'd move reviews fully into their own collection with child-to-parent references.",
+    "explanation": "Combine it with the **computed pattern** (`ratingAvg`, `ratingCount`) and the **subset pattern** (latest 10 reviews embedded) so the product page stays a single read even for viral products.",
+    "followUps": ["What does the extra code path cost you?", "How would you detect outliers before they hit 16 MB?"],
+    "tags": ["mongodb", "schema-patterns", "outlier", "scenario"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-polymorphic-attribute",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "medium",
+    "question": "Products of different types (books, laptops, T-shirts) have different fields. How do you model and search them?",
+    "answer": "Use the **polymorphic pattern**: one `products` collection with shared fields (`name`, `price`) and a **`type` discriminator**, so cross-type search and shared indexes still work (Mongoose discriminators implement this). For the many type-specific, searchable specs, add the **attribute pattern**, `attrs: [{ k, v }]` with one compound index on `attrs.k` and `attrs.v`, queried with `$elemMatch`; or keep a `specs` sub-document with a **wildcard index**.",
+    "followUps": ["Why is $elemMatch required for the attribute pattern?", "When would separate collections be better?"],
+    "tags": ["mongodb", "schema-patterns", "polymorphic", "attribute"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-schema-versioning",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "medium",
+    "question": "How do you change the shape of documents in a 50-million-document collection without downtime?",
+    "answer": "Use the **schema versioning pattern**: add a `schemaVersion` field, deploy code that **reads both** old and new shapes and **writes only the new** one, then migrate the rest gradually (on access or with a throttled background job). Once no old versions remain, remove the old read path. It replaces one risky big-bang migration with a safe, incremental one.",
+    "followUps": ["How do you find how many documents are still on the old version?"],
+    "tags": ["mongodb", "schema-patterns", "versioning"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-tree-categories",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "hard",
+    "question": "How would you model a product category hierarchy in MongoDB? Compare the options.",
+    "answer": "Four tree patterns: **parent references** (easy updates, but descendants need `$graphLookup`), **child references** (easy to list children, hard to go up), **array of ancestors** (each node stores its full ancestor list, so breadcrumbs and \"everything under X\" are one indexed query) and **materialized paths** (a path string queried with an anchored prefix regex). For e-commerce I'd pick **array of ancestors plus parent**: categories are read constantly and restructured rarely, and the cost is rewriting descendants when a subtree moves.",
+    "explanation": "```js\n{ _id: \"Laptops\", parent: \"Computers\", ancestors: [\"Electronics\", \"Computers\"] }\ndb.categories.createIndex({ ancestors: 1 })\ndb.categories.find({ ancestors: \"Computers\" })   // whole subtree\n```",
+    "followUps": ["What happens when you move 'Computers' under a new parent?", "How does $graphLookup work?"],
+    "tags": ["mongodb", "schema-patterns", "tree"]
+  },
+  {
+    "slug": "mongodb-schema-patterns-approximation",
+    "lessonSlug": "mongodb-schema-patterns",
+    "topic": "Schema design patterns",
+    "difficulty": "easy",
+    "question": "What is the approximation pattern and when must you avoid it?",
+    "answer": "The **approximation pattern** reduces writes to hot counters when an exact number doesn't matter: e.g. with probability 1/100, increment the product's `viewCount` by 100. Writes drop by about 100× and the number stays statistically close. Never use it for values that must be exact: stock, money, billing or order counts.",
+    "followUps": ["What other ways are there to reduce write load on a hot counter?"],
+    "tags": ["mongodb", "schema-patterns", "approximation"]
+  }
+]

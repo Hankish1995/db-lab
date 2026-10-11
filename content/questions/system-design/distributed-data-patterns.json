@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "distributed-data-patterns-why-hard",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Distributed transactions",
+    "difficulty": "easy",
+    "question": "Why can't you just use a database transaction for a checkout that spans orders, payments and inventory services?",
+    "answer": "An ACID transaction lives inside **one database**. When orders, payments and inventory each have their own database, and payments go through an external provider, there's no shared transaction manager, so a crash or timeout can leave some steps done and others not (e.g. charged but no stock reserved). You need a coordination pattern instead: **2PC** where all participants support it, or more commonly a **saga** with compensations.",
+    "followUps": ["What is two-phase commit?", "What is a saga?"],
+    "tags": ["distributed-transactions", "microservices"]
+  },
+  {
+    "slug": "distributed-data-patterns-2pc",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Distributed transactions",
+    "difficulty": "medium",
+    "question": "How does two-phase commit work, and what is its main weakness?",
+    "answer": "A **coordinator** asks every participant to **prepare**: do the work, make it durable, hold locks and vote YES or NO. If all vote YES, it records the decision and tells everyone to **commit**; otherwise all abort. The weakness is **blocking**: a participant that voted YES can't decide alone, so if the coordinator crashes before sending the decision, participants stay in doubt **holding locks** until it recovers. It also adds round trips and requires every participant (including third-party APIs) to support it.",
+    "explanation": "PostgreSQL exposes the participant side as `PREPARE TRANSACTION` / `COMMIT PREPARED` (disabled by default via `max_prepared_transactions = 0`). MongoDB uses 2PC internally for multi-shard transactions.",
+    "followUps": ["Where is 2PC still a good fit?", "How does a saga avoid blocking?"],
+    "tags": ["two-phase-commit", "distributed-transactions"]
+  },
+  {
+    "slug": "distributed-data-patterns-saga",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Sagas",
+    "difficulty": "medium",
+    "question": "What is the Saga pattern? Compare choreography and orchestration.",
+    "answer": "A **saga** is a sequence of local transactions, one per service, where each failure triggers **compensating actions** that semantically undo earlier steps (e.g. refund the payment if inventory reservation fails). In **choreography**, services react to each other's events with no central control: simple for a few steps, but the flow is implicit and hard to trace. In **orchestration**, an orchestrator (or a workflow engine like Temporal) tells each service what to do and tracks state: explicit and easier to debug, at the cost of a central component.",
+    "followUps": ["Why is a compensation not the same as a rollback?", "How do you handle isolation between saga steps?"],
+    "tags": ["saga", "microservices", "compensation"]
+  },
+  {
+    "slug": "distributed-data-patterns-dual-write-outbox",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Outbox",
+    "difficulty": "medium",
+    "question": "What is the dual-write problem, and how does the Transactional Outbox pattern solve it?",
+    "answer": "Writing to the database and then publishing to a broker are two separate systems, so a crash between them leaves an order with **no event**, or an event with **no order**. The **outbox** pattern writes the event as a row in an `outbox` table **in the same local transaction** as the business change, so both commit or neither does. A relay then publishes outbox rows, by polling (`FOR UPDATE SKIP LOCKED`) or via **CDC** reading the database log (e.g. Debezium, or MongoDB change streams).",
+    "explanation": "```sql\nBEGIN;\nINSERT INTO orders (id, user_id, total_cents, status) VALUES ('ord_1001', 42, 12999, 'PENDING');\nINSERT INTO outbox (aggregate_id, event_type, payload)\nVALUES ('ord_1001', 'OrderCreated', '{\"orderId\":\"ord_1001\"}');\nCOMMIT;\n```\nThe relay can publish and crash before marking the row, so delivery is **at-least-once**.",
+    "followUps": ["Why does the outbox give at-least-once rather than exactly-once delivery?", "Polling relay vs CDC: trade-offs?"],
+    "tags": ["outbox", "dual-write", "events", "cdc"]
+  },
+  {
+    "slug": "distributed-data-patterns-idempotency-key",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Idempotency",
+    "difficulty": "medium",
+    "question": "A payment request timed out and the client retries. How do you make sure the customer is not charged twice?",
+    "answer": "Use an **idempotency key**: the client generates a unique key per checkout attempt and sends it on every retry. The server inserts it into a payments table with a **unique constraint** (`ON CONFLICT DO NOTHING`); if the key already exists, it returns the **stored result** instead of charging again, or says \"still processing\" if the first attempt is in flight. Pass the same key to the payment provider so its side is idempotent too.",
+    "explanation": "Also store a hash of the request parameters and reject a reused key with different parameters, and keep keys long enough to cover realistic retry windows (e.g. 24 hours).",
+    "followUps": ["Who should generate the key, client or server?", "What if two retries arrive at the same time?"],
+    "tags": ["idempotency", "payments", "retries", "scenario"]
+  },
+  {
+    "slug": "distributed-data-patterns-idempotent-consumer",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Idempotency",
+    "difficulty": "medium",
+    "question": "Your message broker delivers at-least-once. How do you build an idempotent consumer?",
+    "answer": "Either make the operation **naturally idempotent** (`SET status = 'SHIPPED'` can repeat safely; `reserved = reserved + 1` cannot), or **deduplicate**: insert the message ID into a `processed_messages` table with a primary key **in the same transaction** as the side effect. A duplicate violates the key, the transaction rolls back, and the consumer just acknowledges the message. At-least-once delivery plus idempotent consumers gives effectively-once processing.",
+    "followUps": ["Why must the dedup insert be in the same transaction?", "How long do you keep processed IDs?"],
+    "tags": ["idempotency", "messaging", "at-least-once"]
+  },
+  {
+    "slug": "distributed-data-patterns-event-sourcing-cqrs",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Event sourcing",
+    "difficulty": "hard",
+    "question": "What are event sourcing and CQRS, and when are they worth the cost?",
+    "answer": "**Event sourcing** stores the sequence of events (`OrderPlaced`, `PaymentCaptured`…) as the source of truth and derives current state by replaying them, usually with snapshots. **CQRS** separates the write model from read models built for specific queries and updated asynchronously. They're worth it when you need a full audit trail or temporal queries (ledgers, finance) or when read and write shapes differ greatly. The costs: event schema versioning forever, eventually consistent read models, rebuilding projections, and a steeper learning curve.",
+    "followUps": ["Does CQRS require event sourcing?", "How do you fix a bug in historical events?"],
+    "tags": ["event-sourcing", "cqrs", "architecture"]
+  },
+  {
+    "slug": "distributed-data-patterns-checkout-design",
+    "lessonSlug": "distributed-data-patterns",
+    "topic": "Sagas",
+    "difficulty": "hard",
+    "question": "Design the checkout flow across Orders, Payments, Inventory and Email services so it stays correct when any step fails or is retried.",
+    "answer": "Use an **orchestrated saga**: create the order as `PENDING`, **reserve inventory** (cheap to release), **authorize** payment with an **idempotency key**, then confirm the order, capture payment and send email. On failure, run idempotent **compensations** in reverse: void or refund the payment, release the reservation, mark the order `CANCELLED`. Each service publishes its events through a **transactional outbox**, every consumer is **idempotent**, and the `PENDING` status acts as a semantic lock so other flows don't treat the order as final.",
+    "explanation": "Ordering matters: steps that are likely to fail or easy to undo go first. Releasing a reservation is invisible to the customer; a refund shows up on their statement. Add timeouts so a stuck saga is compensated automatically.",
+    "followUps": ["What if a compensation itself fails?", "Why not use 2PC here?"],
+    "tags": ["saga", "system-design", "checkout", "scenario"]
+  }
+]

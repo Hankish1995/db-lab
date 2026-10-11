@@ -1,0 +1,106 @@
+[
+  {
+    "slug": "postgres-data-types-and-constraints-money-type",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Data types",
+    "difficulty": "easy",
+    "question": "Which PostgreSQL type would you use for prices and order totals, and why not float?",
+    "answer": "Use **`numeric(p,s)`**, e.g. `numeric(12,2)`, which stores exact decimals, or store **integer minor units** (`amount_paise bigint`) for speed. Floats are binary approximations: in PostgreSQL `0.1::float8 + 0.2::float8` returns `0.30000000000000004` and isn't equal to 0.3, and the errors accumulate across sums, so totals and ledgers stop matching.",
+    "followUps": ["What does numeric(10,2) do with the value 19.999?", "Why do payment APIs like Stripe use integer amounts?"],
+    "tags": ["postgresql", "data-types", "numeric", "money"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-text-vs-varchar",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Data types",
+    "difficulty": "easy",
+    "question": "In PostgreSQL, should you use text or varchar(255)?",
+    "answer": "In PostgreSQL, `text`, `varchar` and `varchar(n)` are stored the same way and perform the same; `varchar(n)` only adds a length check. So use **`text`** by default and express real business limits with a `CHECK (length(col) <= n)`, which is easier to change later. The `varchar(255)` habit comes from MySQL, where it historically mattered.",
+    "followUps": ["Why should you avoid char(n)?"],
+    "tags": ["postgresql", "data-types", "text"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-timestamptz",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Data types",
+    "difficulty": "medium",
+    "question": "What is the difference between timestamp and timestamptz, and which should you use?",
+    "answer": "**`timestamptz`** represents an absolute instant: input is converted to UTC and output is converted to the session's `TimeZone`. **`timestamp`** is a wall-clock date and time with no zone, and any offset in the input is silently discarded. Use **`timestamptz`** for events like `created_at` and `paid_at`, store instants, and convert to the user's local time in the UI.",
+    "explanation": "Despite its name, timestamptz doesn't store the time zone itself. The same value displays as `09:00+05:30` in an Asia/Kolkata session and `03:30+00` in a UTC session; it's the same instant.",
+    "followUps": ["When is plain timestamp or date the right choice?", "How does the Node.js pg driver return timestamptz?"],
+    "tags": ["postgresql", "data-types", "timestamptz", "time-zones"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-unique-nulls",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Constraints",
+    "difficulty": "medium",
+    "question": "A table has UNIQUE (code, user_id), yet two rows ('WELCOME', NULL) were both inserted. Why, and how do you prevent it?",
+    "answer": "By default PostgreSQL treats **NULLs as distinct** in unique constraints: NULL means unknown, and two unknowns aren't considered equal, so both rows are allowed. Since PostgreSQL 15 you can declare `UNIQUE NULLS NOT DISTINCT (code, user_id)`, which treats NULLs as equal. Alternatives: make the column `NOT NULL`, or use a partial unique index such as `CREATE UNIQUE INDEX ON coupon_uses (code) WHERE user_id IS NULL`.",
+    "followUps": ["When is the default NULLS DISTINCT behaviour actually what you want?"],
+    "tags": ["postgresql", "constraints", "unique", "null"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-foreign-key-actions",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Constraints",
+    "difficulty": "medium",
+    "question": "Explain ON DELETE CASCADE, RESTRICT and SET NULL. Which would you use for orders, order_items and reviews?",
+    "answer": "**RESTRICT / NO ACTION** (the default) blocks deleting a parent that still has children. **CASCADE** deletes the children along with the parent. **SET NULL** keeps the child and sets its foreign key to NULL. For an e-commerce schema: `orders.user_id` → RESTRICT (keep order history), `order_items.order_id` → CASCADE (items are part of the order), `reviews.user_id` → SET NULL (keep the review, anonymise the author).",
+    "explanation": "NO ACTION and RESTRICT differ only in timing: NO ACTION checks at the end of the statement and can be deferred to commit; RESTRICT checks immediately.",
+    "followUps": ["Why is CASCADE on users → orders dangerous?", "Does PostgreSQL index the foreign key column for you?"],
+    "tags": ["postgresql", "constraints", "foreign-keys"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-fk-index",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Constraints",
+    "difficulty": "medium",
+    "question": "Does PostgreSQL automatically create an index on foreign key columns? What happens if you don't add one?",
+    "answer": "No. PostgreSQL requires a unique index on the **referenced** columns (usually the primary key) but does **not** index the **referencing** column, such as `orders.user_id`. Without it, joins from users to orders scan the orders table, and every delete or key update on `users` must scan `orders` to check for references, which gets very slow and holds locks longer. Create it yourself: `CREATE INDEX ON orders (user_id)`.",
+    "explanation": "A composite primary key like `order_items (order_id, product_id)` already covers `order_id` as its leftmost column, but `product_id` still needs its own index.",
+    "followUps": ["How would you find foreign keys without a supporting index?"],
+    "tags": ["postgresql", "foreign-keys", "indexes"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-identity-vs-serial",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Data types",
+    "difficulty": "medium",
+    "question": "What is the difference between serial and an identity column?",
+    "answer": "Both generate ids from a sequence. **`serial`** is an old PostgreSQL shorthand that creates an `integer` column with a sequence default. **`GENERATED ALWAYS AS IDENTITY`** is the SQL-standard replacement: the sequence is tied to the column, and `ALWAYS` rejects manually supplied values unless you write `OVERRIDING SYSTEM VALUE`, so imports can't collide with the sequence. Prefer `bigint GENERATED ALWAYS AS IDENTITY`.",
+    "followUps": ["Why can ids have gaps?", "When would you use a UUID instead, or as well?"],
+    "tags": ["postgresql", "identity", "serial", "primary-key"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-enum-vs-lookup",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Data modeling",
+    "difficulty": "medium",
+    "question": "How would you restrict an order's status to a fixed set of values: enum, CHECK constraint or lookup table?",
+    "answer": "An **enum** is compact (4 bytes) and type-safe, and adding values is easy, but values can't be removed and they sort by declaration order. A **CHECK (status IN (...))** on `text` is simple and easy to change by replacing the constraint. A **lookup table with a foreign key** is best when the business edits the list or each status needs metadata (label, sort order, is_final). For a small, stable set I'd use CHECK or an enum; for anything editable, a lookup table.",
+    "followUps": ["What does WHERE status > 'paid' do on an enum?"],
+    "tags": ["postgresql", "enum", "check", "data-modeling"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-db-vs-app-validation",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Constraints",
+    "difficulty": "hard",
+    "question": "Your team validates everything in Mongoose/Zod and asks why you'd add constraints in PostgreSQL too. What's your argument?",
+    "answer": "App validation protects **one code path**; constraints protect **every writer**: other services, cron jobs, migrations, manual fixes. Some rules can't be enforced correctly in app code at all: a \"check email is free, then insert\" is a **race condition**, while a unique index is concurrency-safe; same for FKs and overlap rules (EXCLUDE). Constraints run inside the same transaction as the write, so the data is guaranteed valid. Keep app validation for friendly early errors and map database errors by SQLSTATE (`23505` unique, `23503` FK, `23514` check).",
+    "followUps": ["How do you add a CHECK constraint to a 100M-row live table safely?", "What does Mongoose's unique: true actually do?"],
+    "tags": ["postgresql", "constraints", "validation", "scenario"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-exclude",
+    "lessonSlug": "postgres-data-types-and-constraints",
+    "topic": "Constraints",
+    "difficulty": "hard",
+    "question": "How would you guarantee that a product never has two overlapping promotions, even under concurrent inserts?",
+    "answer": "Store the period as a range (`tstzrange`) and add an **exclusion constraint**: `EXCLUDE USING gist (product_id WITH =, active_during WITH &&)`. It rejects any new row whose product equals and whose range overlaps an existing row's. The `btree_gist` extension is needed so GiST can handle `=` on a bigint. Unlike a check-then-insert in the app, the constraint is enforced by the index, so two concurrent inserts can't both succeed.",
+    "explanation": "```sql\nCREATE EXTENSION IF NOT EXISTS btree_gist;\nCREATE TABLE promotions (\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  product_id bigint NOT NULL REFERENCES products (id),\n  active_during tstzrange NOT NULL,\n  EXCLUDE USING gist (product_id WITH =, active_during WITH &&)\n);\n```\nRanges like `[2026-11-20, 2026-11-30)` are half-open, so back-to-back promotions don't conflict.",
+    "followUps": ["Where else would you use an exclusion constraint (bookings, delivery slots)?"],
+    "tags": ["postgresql", "exclude", "constraints", "ranges", "scenario"]
+  }
+]

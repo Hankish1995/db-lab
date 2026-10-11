@@ -1,0 +1,154 @@
+[
+  {
+    "slug": "postgres-isolation-levels-default",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "easy",
+    "question": "What is PostgreSQL's default isolation level and how does it behave?",
+    "answer": "**Read Committed**. Every **statement** takes a fresh snapshot, so it sees all data committed before that statement started and never sees uncommitted data. Two identical SELECTs in the same transaction can therefore return different results (non-repeatable reads and phantoms are possible).",
+    "followUps": [
+      "Does PostgreSQL support Read Uncommitted?",
+      "Can you get a lost update at Read Committed?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-read-uncommitted",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "easy",
+    "question": "Can you get a dirty read in PostgreSQL by using READ UNCOMMITTED?",
+    "answer": "No. PostgreSQL accepts `READ UNCOMMITTED` syntactically but **runs it as Read Committed**. Because of MVCC every read uses a snapshot of committed data, so dirty reads are impossible at every level.",
+    "followUps": [
+      "Which databases do allow dirty reads?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels",
+      "mvcc"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-set-level",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "easy",
+    "question": "How do you set the isolation level in PostgreSQL?",
+    "answer": "Per transaction with `BEGIN ISOLATION LEVEL SERIALIZABLE;` or `SET TRANSACTION ISOLATION LEVEL ...` as the **first** statement of the transaction (after any query it errors). Per session with `SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ...` or `SET default_transaction_isolation`. As a default for a database or role with `ALTER DATABASE shop SET default_transaction_isolation = 'repeatable read'`. Check with `SHOW transaction_isolation`.",
+    "followUps": [
+      "Why is setting it per transaction usually better than globally?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-concurrent-update-rc",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "medium",
+    "question": "At Read Committed, two transactions UPDATE the same row at the same time. What exactly happens?",
+    "answer": "The second UPDATE **blocks** on the row lock until the first commits or rolls back. If the first commits, PostgreSQL takes the **newest version of that row**, **re-evaluates the WHERE** clause against it, and applies the update only if it still matches, computing the SET expression from the new values. That's why `SET stock = stock - 1 WHERE stock > 0` is safe. The surprise: it only re-checks rows its original snapshot found, so rows that newly match after the other commit are missed.",
+    "explanation": "Lesson demo: T1 swaps prices (Headphones 900→1100, Speaker 1100→900). T2 runs `UPDATE ... SET flagged = true WHERE price < 1000` concurrently, waits, re-checks Headphones (now 1100), skips it, and never looks at Speaker: `UPDATE 0`, although one product was always under 1000.",
+    "followUps": [
+      "What would happen at Repeatable Read?",
+      "How would you avoid this?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels",
+      "read-committed"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-repeatable-read",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "medium",
+    "question": "How does Repeatable Read work in PostgreSQL, and how is it different from the SQL standard?",
+    "answer": "It's **snapshot isolation**: the transaction uses one snapshot, taken at its first query, for all reads. That prevents non-repeatable reads **and phantoms**, which the standard would still allow at this level. If you update or lock a row that another transaction changed and committed after your snapshot, you get `ERROR: could not serialize access due to concurrent update` (SQLSTATE 40001) and must retry, so lost updates are impossible. Write skew is still possible.",
+    "followUps": [
+      "What is write skew?",
+      "How does MySQL's Repeatable Read differ?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels",
+      "snapshot-isolation"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-write-skew",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "medium",
+    "question": "What is write skew, and which PostgreSQL isolation level prevents it?",
+    "answer": "Write skew is when two transactions read the **same data**, each decides based on it, and they write **different rows**, together breaking a rule neither broke alone. Example: two tabs each check that cart 7 has no coupon and each insert a different coupon. Repeatable Read lets both commit because no row was written twice; only **Serializable** (SSI) detects the read/write dependency and aborts one with 40001. Alternatives: a constraint that encodes the rule, or locking a shared parent row with `FOR UPDATE`.",
+    "followUps": [
+      "Why don't row locks catch it?",
+      "How would a unique constraint solve the coupon case?"
+    ],
+    "tags": [
+      "postgresql",
+      "write-skew",
+      "serializable"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-ssi",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "hard",
+    "question": "How does PostgreSQL implement SERIALIZABLE? Does it lock everything?",
+    "answer": "It uses **Serializable Snapshot Isolation (SSI)**: snapshot isolation plus tracking of **read/write dependencies**. Reads take **predicate locks** (`SIReadLock`) that **don't block** anyone; when a write touches something another transaction read, a dependency is recorded, and if dependencies form a dangerous structure (a pivot transaction with both incoming and outgoing rw-dependencies) one transaction is aborted with `could not serialize access due to read/write dependencies among transactions` (40001). So there's no extra blocking, but there are aborts, including occasional false positives when tracking is coarse (e.g. Seq Scans lock the whole relation).",
+    "followUps": [
+      "Why do good indexes reduce serialization failures?",
+      "What does READ ONLY DEFERRABLE do?"
+    ],
+    "tags": [
+      "postgresql",
+      "ssi",
+      "serializable"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-retry",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "hard",
+    "question": "How do you handle serialization failures in a Node.js application?",
+    "answer": "Wrap the whole transaction in a **retry loop**: on SQLSTATE `40001` (and usually `40P01` deadlock), `ROLLBACK`, wait with exponential backoff plus jitter, and rerun **everything from BEGIN**, including the reads, up to a maximum number of attempts. Use the same client for every query in the transaction and keep side effects such as emails or payment calls **outside** the retried function, because it may run more than once.",
+    "explanation": "```js\nfor (let attempt = 1; ; attempt++) {\n  const client = await pool.connect();\n  try {\n    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');\n    const result = await work(client);\n    await client.query('COMMIT');\n    return result;\n  } catch (err) {\n    await client.query('ROLLBACK').catch(() => {});\n    if (err.code !== '40001' || attempt === 5) throw err;\n    await sleep(2 ** attempt * 10 + Math.random() * 50);\n  } finally {\n    client.release();\n  }\n}\n```",
+    "followUps": [
+      "Why not retry just the failed statement?",
+      "How would you make a payment step safe to retry?"
+    ],
+    "tags": [
+      "postgresql",
+      "serializable",
+      "nodejs",
+      "retry"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-choose-scenario",
+    "lessonSlug": "postgres-isolation-levels",
+    "topic": "Isolation levels",
+    "difficulty": "hard",
+    "question": "Scenario: you're building checkout, a nightly revenue report and a 'one free-shipping voucher per customer per month' rule. Which isolation level would you use for each?",
+    "answer": "**Checkout**: Read Committed with atomic conditional updates (`UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1`) and constraints; it's the hottest path, so avoid aborts. **Nightly report**: Repeatable Read, read only (or `SERIALIZABLE READ ONLY DEFERRABLE`), so all queries see one consistent snapshot. **Voucher rule**: it spans rows and is classic write skew, so either enforce it with a constraint (for example a unique index on customer and month) or run that transaction at **Serializable with a retry loop**.",
+    "followUps": [
+      "What's the downside of making Serializable the database default?",
+      "How would long report transactions affect VACUUM?"
+    ],
+    "tags": [
+      "postgresql",
+      "isolation-levels",
+      "scenario"
+    ]
+  }
+]

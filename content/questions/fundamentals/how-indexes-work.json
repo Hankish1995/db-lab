@@ -1,0 +1,97 @@
+[
+  {
+    "slug": "how-indexes-work-what-is-an-index",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Indexes",
+    "difficulty": "easy",
+    "question": "What is a database index and how does it speed up queries?",
+    "answer": "An index is a **separate, sorted data structure** (usually a B-tree) that stores the values of one or more columns along with **pointers to the rows**. Instead of scanning every row (O(n)), the database walks the tree to the matching keys in **O(log n)** and fetches only those rows. Like the index at the back of a book: look up the term, jump to the page.",
+    "followUps": ["What does an index cost you?", "What does the index entry point to in PostgreSQL vs MySQL InnoDB?"],
+    "tags": ["indexes", "performance"]
+  },
+  {
+    "slug": "how-indexes-work-btree",
+    "lessonSlug": "how-indexes-work",
+    "topic": "B-tree",
+    "difficulty": "medium",
+    "question": "Why do databases use B-trees (B+trees) for indexes instead of a hash table or binary tree?",
+    "answer": "A B+tree keeps keys **sorted**, so it supports equality, **ranges**, prefix matches and **ORDER BY**, which a hash table can't. Each node is a whole disk page holding hundreds of keys, so the **fan-out** is huge and even billions of rows need only **3 to 4 levels**, meaning 3 to 4 page reads, unlike a binary tree that would be ~30 levels deep. The leaves are in key order, so a range scan descends once and then walks sideways.",
+    "followUps": ["When would a hash index be a reasonable choice?", "How does a range query walk the leaves?"],
+    "tags": ["indexes", "b-tree"]
+  },
+  {
+    "slug": "how-indexes-work-leftmost-prefix",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Composite indexes",
+    "difficulty": "medium",
+    "question": "You have a composite index on (customer_id, status, created_at). Which queries can use it efficiently?",
+    "answer": "It follows the **leftmost-prefix rule**, like a phone book sorted by last name then first name. Filters on `customer_id`, `customer_id + status`, or all three use it well, and `WHERE customer_id = ? AND status = ? ORDER BY created_at` even gets its sort from the index. A filter on only `status` or only `created_at` can't seek into it, because those values are scattered across the whole index. Put **equality columns first and range columns last** (MongoDB calls this the ESR rule: Equality, Sort, Range).",
+    "explanation": "Some engines (MySQL 8, PostgreSQL 18 for B-trees) can do a **skip scan** when the leading column has few distinct values, but you shouldn't design indexes relying on it.",
+    "followUps": ["Why does putting a range column first hurt?", "Are separate single-column indexes on each field just as good?"],
+    "tags": ["indexes", "composite-index"]
+  },
+  {
+    "slug": "how-indexes-work-planner-ignores-index",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Query planner",
+    "difficulty": "medium",
+    "question": "Why might PostgreSQL ignore an index that exists on the column you're filtering?",
+    "answer": "Because of **selectivity**: if the condition matches a large fraction of rows (say `status = 'delivered'` matching 85% of orders), fetching each row through the index means lots of random reads, so a **sequential scan** is cheaper and the cost-based planner chooses it. It can also be ignored when the query can't use it: a **function on the column**, a **leading-wildcard LIKE**, a **type mismatch** that casts the column, or an OR branch without an index. Stale statistics can cause bad estimates too, so running `ANALYZE` is a first check.",
+    "followUps": ["What is a bitmap heap scan?", "How would you index a column where you only query the rare value?"],
+    "tags": ["indexes", "query-planner", "selectivity"]
+  },
+  {
+    "slug": "how-indexes-work-covering-index",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Covering indexes",
+    "difficulty": "medium",
+    "question": "What is a covering index / index-only scan?",
+    "answer": "A covering index contains **every column a query needs**, so the database answers from the index alone without fetching rows from the table. In PostgreSQL that's an **Index Only Scan**, often built with `INCLUDE` columns; in MongoDB it's a **covered query**, shown as `PROJECTION_COVERED` with `totalDocsExamined: 0`. It saves the per-row lookup, which is the expensive part of an index scan.",
+    "explanation": "```sql\nCREATE INDEX ON orders (customer_id) INCLUDE (total, created_at);\nSELECT created_at, total FROM orders WHERE customer_id = 42;\n```\nPostgreSQL caveat: index-only scans still consult the visibility map and visit the heap for pages not marked all-visible (shown as `Heap Fetches`). MongoDB caveat: exclude `_id` from the projection unless it's in the index.",
+    "followUps": ["Why might an index-only scan still show heap fetches?"],
+    "tags": ["indexes", "covering-index"]
+  },
+  {
+    "slug": "how-indexes-work-clustered-vs-heap",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Storage",
+    "difficulty": "hard",
+    "question": "What is the difference between a clustered index and a heap table? How do PostgreSQL and MySQL differ?",
+    "answer": "In a **clustered** layout the table rows are stored **inside the primary key's B+tree**, ordered by the key; MySQL InnoDB works this way, and its secondary indexes store the **primary key value**, so a secondary lookup does a second search in the PK tree. PostgreSQL stores tables as a **heap** in no particular order, and every index, including the primary key, points to the row's physical location (tuple id). PostgreSQL's `CLUSTER` command reorders a table once but doesn't maintain that order for new rows.",
+    "explanation": "Consequence in InnoDB: random primary keys like UUIDv4 cause page splits and fragmentation on insert, and a wide primary key makes every secondary index bigger. MongoDB (WiredTiger) stores documents by an internal record id and indexes, including `_id`, point to it; clustered collections are an optional feature.",
+    "followUps": ["Why do random UUID primary keys hurt insert performance in InnoDB?"],
+    "tags": ["indexes", "clustered-index", "postgresql", "mysql"]
+  },
+  {
+    "slug": "how-indexes-work-index-not-used",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Indexes",
+    "difficulty": "medium",
+    "question": "Give examples of query patterns that prevent an index from being used, and how to fix them.",
+    "answer": "**Functions on the column** (`WHERE lower(email) = ?`) need an expression index. A **leading wildcard** (`LIKE '%phone'`) has no sorted starting point, so use full-text search or a trigram GIN index. **Arithmetic on the column** (`created_at + interval '1 day' > now()`) should be rewritten to keep the column bare. A **type mismatch** like comparing an integer column to `5.0` casts the column. An **OR** where one branch isn't indexed forces a scan. In MongoDB, unanchored or case-insensitive regexes can't use the index efficiently.",
+    "explanation": "PostgreSQL detail: a prefix match `LIKE 'abc%'` can use a default B-tree only with the C collation; otherwise create the index with `text_pattern_ops`.",
+    "followUps": ["How does PostgreSQL handle an OR where both columns are indexed?"],
+    "tags": ["indexes", "performance", "gotchas"]
+  },
+  {
+    "slug": "how-indexes-work-cost-of-indexes",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Indexes",
+    "difficulty": "easy",
+    "question": "Why not just index every column?",
+    "answer": "Every index is extra work on **every write**: each insert must add an entry to every index, and updates often must too (**write amplification**). Indexes also use **disk** and compete for **memory** (PostgreSQL's buffer cache, MongoDB's WiredTiger cache), and unused or duplicate indexes slow bulk loads for no benefit. Index for your actual queries, and drop indexes that aren't used.",
+    "followUps": ["How would you find unused indexes?", "What is a partial index?"],
+    "tags": ["indexes", "trade-offs"]
+  },
+  {
+    "slug": "how-indexes-work-scenario-slow-query",
+    "lessonSlug": "how-indexes-work",
+    "topic": "Indexes",
+    "difficulty": "hard",
+    "question": "Scenario: the 'My orders' page (orders for a customer, newest first, 20 per page) is slow on a 50M-row orders table. Walk me through how you'd diagnose and fix it in PostgreSQL and MongoDB.",
+    "answer": "First look at the plan: `EXPLAIN ANALYZE` in PostgreSQL, `explain('executionStats')` in MongoDB. A **Seq Scan** / **COLLSCAN**, or `totalDocsExamined` far above `nReturned`, means a missing or wrong index; a separate sort step means the index doesn't provide the order. The fix is a composite index matching **filter then sort**: `(customer_id, created_at DESC)` in PostgreSQL, `{ customerId: 1, createdAt: -1 }` in MongoDB, so the database seeks to the customer and reads the first 20 entries already sorted. Build it without blocking writes (`CREATE INDEX CONCURRENTLY` in PostgreSQL), then re-check the plan and consider keyset pagination instead of large OFFSET/skip values.",
+    "explanation": "```sql\nCREATE INDEX CONCURRENTLY idx_orders_customer_created\n  ON orders (customer_id, created_at DESC);\n\nEXPLAIN ANALYZE\nSELECT * FROM orders\nWHERE customer_id = 42\nORDER BY created_at DESC\nLIMIT 20;\n```\n```js\ndb.orders.createIndex({ customerId: 1, createdAt: -1 })\ndb.orders.find({ customerId: 42 }).sort({ createdAt: -1 }).limit(20).explain('executionStats')\n```",
+    "followUps": ["Why is OFFSET 100000 slow even with the index?", "What if the page also filters by status?"],
+    "tags": ["indexes", "explain", "scenario"]
+  }
+]

@@ -1,0 +1,96 @@
+[
+  {
+    "slug": "postgres-joins-inner-vs-left",
+    "lessonSlug": "postgres-joins",
+    "topic": "Joins",
+    "difficulty": "easy",
+    "question": "What is the difference between an INNER JOIN and a LEFT JOIN?",
+    "answer": "An **INNER JOIN** returns only rows that have a match on both sides. A **LEFT JOIN** returns every row from the left table, and fills the right table's columns with **NULL** when there is no match. Example: `users LEFT JOIN orders` lists every customer, including those who never ordered; the inner join drops them.",
+    "followUps": ["What does a FULL OUTER JOIN return?", "Why do teams avoid RIGHT JOIN?"],
+    "tags": ["sql", "joins"]
+  },
+  {
+    "slug": "postgres-joins-self-and-cross",
+    "lessonSlug": "postgres-joins",
+    "topic": "Joins",
+    "difficulty": "easy",
+    "question": "What are a self join and a cross join? Give a use case for each.",
+    "answer": "A **self join** joins a table to itself using two aliases, for hierarchical or peer relationships: `users u LEFT JOIN users r ON r.id = u.referred_by` shows who referred whom. A **cross join** returns every combination of rows (a Cartesian product) with no condition: useful to build a grid such as every product × every day for a report, dangerous by accident because the row count multiplies.",
+    "followUps": ["How would you list a whole category tree, not just one level?"],
+    "tags": ["sql", "joins", "self-join"]
+  },
+  {
+    "slug": "postgres-joins-where-vs-on",
+    "lessonSlug": "postgres-joins",
+    "topic": "Joins",
+    "difficulty": "medium",
+    "question": "Your LEFT JOIN from users to orders has WHERE o.status = 'delivered', and customers without orders disappear. Why?",
+    "answer": "`WHERE` runs **after** the join. Unmatched users have `o.status = NULL`, and `NULL = 'delivered'` is not true, so they are filtered out: the LEFT JOIN effectively becomes an INNER JOIN. Move the right-table condition into the `ON` clause (`ON o.user_id = u.id AND o.status = 'delivered'`) so it decides what matches rather than which rows survive.",
+    "explanation": "Rule: conditions on the left table go in `WHERE`; conditions on the right table of a LEFT JOIN go in `ON`. The exception is the deliberate anti-join `WHERE o.user_id IS NULL`.",
+    "followUps": ["Why does count(*) return 1 for a user with no orders in a LEFT JOIN?"],
+    "tags": ["sql", "joins", "left-join"]
+  },
+  {
+    "slug": "postgres-joins-not-in-null",
+    "lessonSlug": "postgres-joins",
+    "topic": "Anti-joins",
+    "difficulty": "medium",
+    "question": "Why can `WHERE id NOT IN (SELECT user_id FROM orders)` return zero rows?",
+    "answer": "If the subquery returns even one **NULL**, `x NOT IN (…, NULL)` evaluates to `x <> … AND x <> NULL`, and `x <> NULL` is unknown, so the whole condition is never true and **no rows** come back. Use `NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)` instead: it's NULL-safe and PostgreSQL plans it as an efficient **anti-join**.",
+    "explanation": "In a typical shop, guest-checkout orders have `user_id = NULL`, which is exactly when this bites. `NOT IN` also can't be converted to an anti-join, so it often plans worse.",
+    "followUps": ["Is NOT IN safe with a literal list like NOT IN (1, 2, 3)?", "Is LEFT JOIN ... IS NULL equivalent to NOT EXISTS?"],
+    "tags": ["sql", "anti-join", "null"]
+  },
+  {
+    "slug": "postgres-joins-exists-vs-join",
+    "lessonSlug": "postgres-joins",
+    "topic": "Semi-joins",
+    "difficulty": "medium",
+    "question": "When would you use EXISTS instead of a JOIN?",
+    "answer": "Use **EXISTS** when you only need to know whether a match exists, not its columns: \"users who have ordered\". A JOIN returns one row **per match**, so a user with three orders appears three times and you'd need `DISTINCT`. EXISTS is a **semi-join**: it stops at the first match and returns each left row at most once.",
+    "followUps": ["Is IN (subquery) different from EXISTS in PostgreSQL?"],
+    "tags": ["sql", "exists", "semi-join"]
+  },
+  {
+    "slug": "postgres-joins-fan-out",
+    "lessonSlug": "postgres-joins",
+    "topic": "Joins",
+    "difficulty": "medium",
+    "question": "A revenue report joining orders to order_items shows totals that are far too high. What's wrong and how do you fix it?",
+    "answer": "**Join fan-out**: each order is repeated once per order item, so `SUM(o.total)` counts each order's total several times. Fix it by **aggregating the child table first** (one row per `order_id`) in a subquery or CTE and then joining, or by summing only columns at the item level. `SUM(DISTINCT total)` is not a fix, because two different orders can share the same total.",
+    "explanation": "```sql\nSELECT u.id, sum(o.total) AS revenue, sum(i.units) AS units\nFROM users u\nJOIN orders o ON o.user_id = u.id\nLEFT JOIN (\n  SELECT order_id, sum(quantity) AS units\n  FROM order_items GROUP BY order_id\n) i ON i.order_id = o.id\nGROUP BY u.id;\n```",
+    "followUps": ["What happens if you join both order_items and payments to orders?"],
+    "tags": ["sql", "joins", "aggregation", "fan-out"]
+  },
+  {
+    "slug": "postgres-joins-lateral",
+    "lessonSlug": "postgres-joins",
+    "topic": "LATERAL",
+    "difficulty": "medium",
+    "question": "What is a LATERAL join and when is it useful?",
+    "answer": "A **LATERAL** subquery in `FROM` can reference columns of tables listed before it, so it runs **once per outer row**, like a for-each loop. It's the cleanest way to get **top-N per group**: for each user, `SELECT ... FROM orders WHERE user_id = u.id ORDER BY created_at DESC LIMIT 3`. With an index on `(user_id, created_at DESC)`, each iteration is a short index scan. Use `LEFT JOIN LATERAL ... ON true` to keep users with no orders.",
+    "followUps": ["How would you do the same with ROW_NUMBER()?", "When is the window-function version faster?"],
+    "tags": ["sql", "lateral", "top-n"]
+  },
+  {
+    "slug": "postgres-joins-algorithms",
+    "lessonSlug": "postgres-joins",
+    "topic": "Join algorithms",
+    "difficulty": "hard",
+    "question": "What join algorithms does PostgreSQL use, and when does the planner pick each one?",
+    "answer": "**Nested Loop**: for each outer row, look up matching inner rows; great when the outer side is small and the inner side has an index. **Hash Join**: build a hash table on the smaller input and probe it with the larger one; the workhorse for large equality joins. **Merge Join**: walk two inputs sorted on the join key; good when both are already sorted, e.g. via indexes. The planner chooses using row estimates from statistics, so stale stats or missing foreign-key indexes lead to bad choices.",
+    "followUps": ["What does a Nested Loop with a huge 'loops' count in EXPLAIN ANALYZE suggest?", "Why should foreign key columns be indexed?"],
+    "tags": ["postgresql", "joins", "planner"]
+  },
+  {
+    "slug": "postgres-joins-scenario-customers-without-orders",
+    "lessonSlug": "postgres-joins",
+    "topic": "Joins",
+    "difficulty": "hard",
+    "question": "Product asks for \"every active customer, their number of delivered orders in the last 30 days (0 if none), and their latest order date\". How do you write it, and what traps do you avoid?",
+    "answer": "Start from `users` with a **LEFT JOIN** to orders and put the status and date filters in the **ON** clause, so inactive buyers keep their row; put `u.is_active` in `WHERE`. Count `o.id`, not `*`, so customers with no match get 0. Get the latest order date from a separate correlated subquery or LATERAL, since the 30-day filter would hide older orders. Index `orders (user_id, created_at)` so both parts are index lookups.",
+    "explanation": "```sql\nSELECT u.id, u.email,\n       count(o.id) AS delivered_30d,\n       (SELECT max(created_at) FROM orders x WHERE x.user_id = u.id) AS last_order_at\nFROM users u\nLEFT JOIN orders o\n  ON o.user_id = u.id\n AND o.status = 'delivered'\n AND o.created_at >= now() - interval '30 days'\nWHERE u.is_active\nGROUP BY u.id, u.email;\n```",
+    "followUps": ["How would you verify the result is correct?", "What index would you add?"],
+    "tags": ["sql", "joins", "scenario"]
+  }
+]

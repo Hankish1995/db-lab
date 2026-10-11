@@ -1,0 +1,84 @@
+[
+  {
+    "slug": "mongodb-schema-design-golden-rule",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "easy",
+    "question": "What is the main principle of MongoDB schema design, and how does it differ from SQL?",
+    "answer": "**Data that is accessed together should be stored together.** In SQL you normalize by entity first and answer any question with joins later. In MongoDB you start from the **workload**: list the frequent queries and shape documents so each hot query reads **one document**. For example, a product page reads product details, variants and specs, so they're embedded in the product document.",
+    "followUps": ["Can the same entities need different schemas in two apps?", "What is the cost of designing for queries?"],
+    "tags": ["mongodb", "schema-design"]
+  },
+  {
+    "slug": "mongodb-schema-design-embed-vs-reference",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "medium",
+    "question": "How do you decide between embedding and referencing?",
+    "answer": "**Embed** when the data is small, **bounded**, read together with the parent, and benefits from atomic updates with it (addresses in a user). **Reference** when it's large, **unbounded**, shared by many parents, updated independently or often queried on its own (reviews of a product). Embedding gives one read and single-document atomicity; referencing gives small documents and no duplication but needs a second query or `$lookup`.",
+    "followUps": ["What happens if you embed an unbounded array?", "How does $lookup affect this decision?"],
+    "tags": ["mongodb", "schema-design", "embedding"]
+  },
+  {
+    "slug": "mongodb-schema-design-one-to-squillions",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "medium",
+    "question": "How do you model a one-to-many relationship where the 'many' side can grow to millions, like reviews or page views of a product?",
+    "answer": "Use **child-to-parent referencing**: each review stores `productId`, and reviews live in their own collection with an index on `{ productId: 1, createdAt: -1 }`. An array of reviews (or even of review IDs) in the product would be **unbounded**, making every update rewrite a growing document and eventually hitting the **16 MB** limit. The product page then pages reviews with a cheap indexed query.",
+    "explanation": "Common refinement: also embed the latest few reviews in the product (subset pattern) and keep `ratingAvg`/`ratingCount` pre-computed (computed pattern), so the product page still needs only one read.",
+    "followUps": ["How would you show the average rating without scanning reviews?"],
+    "tags": ["mongodb", "schema-design", "relationships"]
+  },
+  {
+    "slug": "mongodb-schema-design-order-price-duplication",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "medium",
+    "question": "Is it wrong to copy the product name and price into each order? Isn't that duplication?",
+    "answer": "It's duplication, and it's **correct**. An order is a **historical snapshot**: if the price changes next month, the order, invoice and refund logic must still use what the customer actually paid. Referencing the live product would show the wrong price. The general rule: duplicate data that is **read often and changes rarely**, or that must be **frozen in time**, and never duplicate fast-changing data like stock counts.",
+    "followUps": ["When would duplicated data need to be kept in sync, and how?", "Would you copy the shipping address too?"],
+    "tags": ["mongodb", "schema-design", "duplication"]
+  },
+  {
+    "slug": "mongodb-schema-design-many-to-many",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "medium",
+    "question": "How do you model a many-to-many relationship such as products and categories?",
+    "answer": "Store an **array of references on the side that stays small**: each product has `categoryIds: [\"men\", \"summer\"]`, with a **multikey index** on it. \"Products in category X\" is then `find({ categoryIds: \"x\" })`. Don't also keep a `productIds` array in each category, because that side is unbounded and you'd have to keep both sides in sync.",
+    "followUps": ["What if both sides can be large, like students and courses at scale?"],
+    "tags": ["mongodb", "schema-design", "relationships"]
+  },
+  {
+    "slug": "mongodb-schema-design-lookup-cost",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "medium",
+    "question": "MongoDB has $lookup. Why not just normalize everything like in SQL and join?",
+    "answer": "`$lookup` works, but it's an extra stage on every read: for each input document the server must find matches in the other collection, which needs an **index on the foreign field** and gets more expensive in **sharded** clusters. MongoDB's strength is answering the hot path from **one document** with one index lookup. Use `$lookup` for reports and admin screens; if your most frequent page needs it, the schema split data that is accessed together.",
+    "followUps": ["Which index does a $lookup need?", "When is a relational database simply the better choice?"],
+    "tags": ["mongodb", "schema-design", "lookup"]
+  },
+  {
+    "slug": "mongodb-schema-design-anti-patterns",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "easy",
+    "question": "Name some common MongoDB schema anti-patterns.",
+    "answer": "**Unbounded arrays** (every review or log in one document), **too many collections** (one per day or per tenant), **unnecessary indexes** that slow writes and eat RAM, **separating data that's always read together** (forcing a `$lookup` on every page), **bloated documents** full of rarely-read data, and **duplicating fast-changing fields** like stock levels.",
+    "followUps": ["How would you detect an unbounded array in production?"],
+    "tags": ["mongodb", "schema-design", "anti-patterns"]
+  },
+  {
+    "slug": "mongodb-schema-design-ecommerce-scenario",
+    "lessonSlug": "mongodb-schema-design",
+    "topic": "Schema design",
+    "difficulty": "hard",
+    "question": "Scenario: design the MongoDB schema for an e-commerce store with users, products, orders, reviews and inventory. Justify each decision.",
+    "answer": "I start from the queries: product page, add to cart/checkout, my orders, reviews list, stock updates. **users** embed their few addresses. **products** embed variants and specs, hold `categoryIds`, and store pre-computed `ratingAvg`/`ratingCount` (plus maybe the latest few reviews) so the product page is one read. **orders** reference `userId` but **copy** product name, price, qty and the shipping address, because an order is a historical snapshot. **reviews** are their own collection with `productId` (unbounded), and **inventory** is separate, one document per product per warehouse, because it's write-hot and shouldn't rewrite product documents on every sale.",
+    "explanation": "Indexes that follow from the queries:\n```js\ndb.orders.createIndex({ userId: 1, createdAt: -1 })     // my orders\ndb.reviews.createIndex({ productId: 1, createdAt: -1 }) // reviews page\ndb.products.createIndex({ categoryIds: 1, price: 1 })   // category listing\ndb.inventory.createIndex({ productId: 1, warehouseId: 1 }, { unique: true })\n```\nStock decrements use a conditional atomic update (`{ qty: { $gte: n } }` in the filter); placing an order and decrementing stock together can use a transaction.",
+    "followUps": ["How do you keep ratingAvg correct?", "Where would you put the cart?", "What changes if a product gets 5 million reviews?"],
+    "tags": ["mongodb", "schema-design", "scenario"]
+  }
+]

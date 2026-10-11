@@ -1,0 +1,98 @@
+[
+  {
+    "slug": "postgres-ctes-and-window-functions-where-vs-having",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "GROUP BY",
+    "difficulty": "easy",
+    "question": "What is the difference between WHERE and HAVING, and what does the FILTER clause do?",
+    "answer": "**WHERE** filters individual rows **before** grouping; **HAVING** filters whole groups **after** aggregation, so it can use aggregates like `count(*) > 1000`. **FILTER** applies a condition to a single aggregate, so you can compute several conditional aggregates in one pass: `count(*) FILTER (WHERE status = 'cancelled')` next to a plain `count(*)`.",
+    "followUps": ["How would you write the FILTER example without FILTER?"],
+    "tags": ["sql", "group-by", "having", "filter"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-window-vs-group-by",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "easy",
+    "question": "What is a window function and how is it different from GROUP BY?",
+    "answer": "A **window function** computes a value over a set of rows related to the current row, defined by `OVER (PARTITION BY ... ORDER BY ...)`, and **keeps every row**. **GROUP BY** collapses each group into one row. Example: `sum(total) OVER (PARTITION BY user_id)` shows every order alongside the user's total spend, which GROUP BY alone can't do without a join back.",
+    "followUps": ["Can you use a window function in WHERE?", "In which order are WHERE, GROUP BY, window functions and ORDER BY evaluated?"],
+    "tags": ["sql", "window-functions", "group-by"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-rank-functions",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "easy",
+    "question": "What is the difference between ROW_NUMBER, RANK and DENSE_RANK?",
+    "answer": "For values 120, 120, 90: **ROW_NUMBER** gives 1, 2, 3 (always unique; ties broken arbitrarily unless you add a tie-breaker), **RANK** gives 1, 1, 3 (ties share a rank, then a gap), **DENSE_RANK** gives 1, 1, 2 (ties share a rank, no gap). Use ROW_NUMBER for deduplication and top-N, RANK for competition-style rankings, DENSE_RANK for \"Nth highest distinct value\".",
+    "followUps": ["How do you find the second-highest order total per user?", "Why might ROW_NUMBER give different results on two runs?"],
+    "tags": ["sql", "window-functions", "ranking"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-cte-materialization",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "CTEs",
+    "difficulty": "medium",
+    "question": "Are CTEs an optimization fence in PostgreSQL?",
+    "answer": "Not anymore by default. Since **PostgreSQL 12**, a non-recursive, side-effect-free CTE that is referenced **once** is **inlined** into the main query, so the planner can push filters into it and use indexes. A CTE referenced **more than once** is materialized (computed once, stored). You can force either behaviour with `WITH x AS MATERIALIZED (...)` or `AS NOT MATERIALIZED`. Before 12, every CTE was materialized, which is where the \"fence\" reputation comes from.",
+    "explanation": "In practice: `WITH big AS (SELECT * FROM orders WHERE total > 500) SELECT * FROM big WHERE id = 4242` becomes a primary-key index scan; adding `MATERIALIZED` turns it into a full scan feeding a CTE Scan.",
+    "followUps": ["When would you deliberately use MATERIALIZED?", "What about CTEs that contain INSERT/UPDATE/DELETE?"],
+    "tags": ["sql", "cte", "planner"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-recursive-cte",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "CTEs",
+    "difficulty": "medium",
+    "question": "How do you fetch a whole category tree stored with a parent_id column?",
+    "answer": "With a **recursive CTE**: an **anchor** query selects the starting rows (e.g. top-level categories or one category), then `UNION ALL` a **recursive term** that joins `categories` to the CTE on `c.parent_id = tree.id`. PostgreSQL repeats the recursive term on the newly found rows until none are produced. Carry a `depth` or `path` column for ordering and add a cycle guard: a depth limit, a visited-path check, or the `CYCLE` clause (PostgreSQL 14+).",
+    "explanation": "```sql\nWITH RECURSIVE tree AS (\n  SELECT id, name, 1 AS depth FROM categories WHERE parent_id IS NULL\n  UNION ALL\n  SELECT c.id, c.name, t.depth + 1\n  FROM categories c JOIN tree t ON c.parent_id = t.id\n)\nSELECT * FROM tree;\n```",
+    "followUps": ["What happens if the data contains a cycle?", "What alternatives exist for storing trees (closure table, ltree)?"],
+    "tags": ["sql", "recursive-cte", "hierarchy"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-month-over-month",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "medium",
+    "question": "How would you compute month-over-month revenue growth and a running total in SQL?",
+    "answer": "Aggregate to one row per month first (CTE with `date_trunc('month', created_at)` and `sum(total)`), then apply window functions ordered by month: `LAG(revenue) OVER (ORDER BY month)` for the previous month, `(revenue - prev) / NULLIF(prev, 0)` for growth, and `SUM(revenue) OVER (ORDER BY month)` for the running total. A named `WINDOW w AS (ORDER BY month)` avoids repeating the window.",
+    "explanation": "Watch out for months with no orders: they're missing rows, so LAG compares with an older month. Generate a full month series with `generate_series` and LEFT JOIN it when gaps are possible.",
+    "followUps": ["How would you compute year-over-year growth for the same month?", "What is LEAD used for?"],
+    "tags": ["sql", "window-functions", "lag", "analytics"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-frames",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "hard",
+    "question": "What is a window frame, and what is the difference between ROWS and RANGE?",
+    "answer": "The **frame** is the subset of the partition used for the current row, e.g. `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` for a 7-row moving average. **ROWS** counts physical rows; **RANGE** works on values, so rows with equal ORDER BY values (peers) are included together, and it accepts offsets like `INTERVAL '6 days' PRECEDING`. With ORDER BY and no frame, the default is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which is why running totals jump over ties and `LAST_VALUE` returns the current row.",
+    "explanation": "For values 10, 20, 20, 30, `sum(x) OVER (ORDER BY x)` gives 10, 50, 50, 80, while `ROWS UNBOUNDED PRECEDING` gives 10, 30, 50, 80.",
+    "followUps": ["How would you compute a 7-day moving average when some days have no orders?"],
+    "tags": ["sql", "window-functions", "frames"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-top-n-per-group",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "hard",
+    "question": "Write a query for the 3 most recent orders per customer. Which approach is faster on a large table?",
+    "answer": "Option 1: `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC)` in a subquery, then `WHERE rn <= 3` outside (window functions can't go in WHERE). Option 2: `CROSS JOIN LATERAL (SELECT ... WHERE user_id = u.id ORDER BY created_at DESC LIMIT 3)`. With an index on `(user_id, created_at DESC)`, LATERAL does a short index scan per user and stops after 3 rows, so it wins when users have many orders; the window version reads every order but needs no per-user lookups and handles ties and complex rankings well.",
+    "explanation": "On a 500k-order test table (about 10 orders per user, warm cache) the window version took about 620 ms and LATERAL about 240 ms. PostgreSQL 15+ adds a `Run Condition` to WindowAgg so it stops numbering once rn passes 3, but it still reads all input rows.",
+    "followUps": ["What if you need ties included (all orders sharing 3rd place)?", "How do you keep users with no orders in the LATERAL version?"],
+    "tags": ["sql", "window-functions", "lateral", "top-n", "scenario"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-node-report-scenario",
+    "lessonSlug": "postgres-ctes-and-window-functions",
+    "topic": "Window functions",
+    "difficulty": "hard",
+    "question": "A Node.js endpoint loads 200,000 orders into memory to build a leaderboard of each category's top 5 products by revenue with their rank and share of category revenue. How would you redesign it?",
+    "answer": "Move it into one SQL query. A CTE aggregates `order_items` joined to `products` into revenue per product (one row per product, avoiding fan-out). Then window functions over that result: `RANK() OVER (PARTITION BY category_id ORDER BY revenue DESC)` for the rank and `revenue / sum(revenue) OVER (PARTITION BY category_id)` for the share. Filter `rank <= 5` in an outer query. The database returns a few dozen rows instead of 200,000, and if it's still heavy, precompute it into a materialized view refreshed on a schedule.",
+    "explanation": "```sql\nWITH product_revenue AS (\n  SELECT p.category_id, p.id, p.name, sum(oi.line_total) AS revenue\n  FROM order_items oi JOIN products p ON p.id = oi.product_id\n  GROUP BY p.category_id, p.id, p.name\n), ranked AS (\n  SELECT *,\n    RANK() OVER (PARTITION BY category_id ORDER BY revenue DESC) AS rnk,\n    round(100 * revenue / sum(revenue) OVER (PARTITION BY category_id), 1) AS pct\n  FROM product_revenue\n)\nSELECT * FROM ranked WHERE rnk <= 5 ORDER BY category_id, rnk;\n```",
+    "followUps": ["RANK or ROW_NUMBER here, and why?", "How would you keep this fast as order_items grows?"],
+    "tags": ["sql", "window-functions", "cte", "scenario"]
+  }
+]

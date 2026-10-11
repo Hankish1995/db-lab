@@ -1,0 +1,161 @@
+[
+  {
+    "slug": "postgres-jsonb-and-full-text-json-vs-jsonb",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "easy",
+    "question": "What is the difference between json and jsonb in PostgreSQL?",
+    "answer": "`json` stores the **exact input text**, keeping whitespace, key order and duplicate keys, and re-parses it on every access. `jsonb` stores a **parsed binary** form: duplicate keys are removed (last wins), key order isn't preserved, inserts are slightly slower, but queries are much faster and it supports **GIN indexes** and operators like `@>` and `?`. Use jsonb by default; json only to keep a payload byte-for-byte.",
+    "followUps": [
+      "What happens to duplicate keys in jsonb?",
+      "Which operators need jsonb?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "json"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-operators",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "easy",
+    "question": "What do the ->, ->>, @> and ? operators do on a jsonb column?",
+    "answer": "`->` returns a field as **jsonb** (`attributes -> 'brand'` gives `\"Pixelco\"`), `->>` returns it as **text** (`Pixelco`), so you cast it for numeric comparisons. `@>` tests **containment**: `attributes @> '{\"color\":\"red\"}'` is true if that key/value is present, and it works inside arrays too. `?` tests whether a **top-level key exists**; `?|` and `?&` check any/all of several keys. `#>` and `#>>` do the same as `->`/`->>` for a nested path.",
+    "followUps": [
+      "Why does (attributes ->> 'ram_gb') > 8 behave unexpectedly?",
+      "What does @? do?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "operators"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-gin-opclasses",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "medium",
+    "question": "How do you index a jsonb column? What's the difference between jsonb_ops and jsonb_path_ops?",
+    "answer": "Use a **GIN** index: `CREATE INDEX ON catalog USING gin (attributes)`. The default **`jsonb_ops`** indexes keys and values separately and supports `@>`, `?`, `?|`, `?&`, `@?` and `@@`. **`jsonb_path_ops`** indexes hashes of paths to values, so it's **smaller and usually faster** for containment but supports only `@>`, `@?` and `@@`, not key-existence. For a single field compared with `=`, ranges or ORDER BY, a B-tree **expression index** on `(attributes ->> 'brand')` is better.",
+    "explanation": "On 100k products the default GIN index was 824 kB vs 464 kB for jsonb_path_ops, and with only jsonb_path_ops the query `attributes ? 'waterproof'` fell back to a Seq Scan.",
+    "followUps": [
+      "Why doesn't a GIN index help WHERE attributes ->> 'brand' = 'Nova'?",
+      "What's the write cost of GIN indexes?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "gin",
+      "indexes"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-update-jsonb",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "medium",
+    "question": "How do you update a single field inside a jsonb column, and what are the gotchas?",
+    "answer": "Use **`jsonb_set(col, '{path,to,key}', 'value')`** for a nested value, **`col || '{...}'`** to merge top-level keys, and **`col - 'key'`** to remove one. Gotchas: `jsonb_set` does **not create missing intermediate objects** (it returns the value unchanged), `||` is a **shallow** merge that replaces whole nested objects, and every update rewrites the **entire** jsonb value as a new row version, so big documents updated often are expensive.",
+    "explanation": "```sql\nUPDATE catalog\nSET attributes = jsonb_set(attributes, '{specs,screen,inches}', '6.4')\nWHERE id = 3;\n\nUPDATE catalog\nSET attributes = attributes || '{\"on_sale\": true}'\nWHERE id = 1;\n```",
+    "followUps": [
+      "How does this compare to MongoDB's $set?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "update"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-jsonb-vs-columns",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "medium",
+    "question": "When should you store data in a jsonb column instead of regular columns?",
+    "answer": "Use **jsonb** for data whose shape **varies** and that you mostly display: product attributes that differ per category, optional settings, third-party payloads. Use **real columns** for anything you **filter, sort, join or constrain** on often, because columns get types, `NOT NULL`/`UNIQUE`/`CHECK`, foreign keys, compact storage and accurate planner statistics. The usual design is hybrid: core columns plus one `attributes jsonb`; promote a JSON field to a column once every query uses it.",
+    "followUps": [
+      "What is the EAV anti-pattern?",
+      "Can you enforce constraints on jsonb fields?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "schema-design"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-fts-basics",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "Full-text search",
+    "difficulty": "medium",
+    "question": "How does full-text search work in PostgreSQL? Explain tsvector, tsquery and @@.",
+    "answer": "A **`tsvector`** is the document normalized into **lexemes**: `to_tsvector('english', 'running shoes')` stems words (`run`, `shoe`), drops stop words and records positions. A **`tsquery`** is the search normalized the same way, with operators `&`, `|`, `!` and `<->` (phrase); `websearch_to_tsquery` builds it safely from user input. **`@@`** tests whether the vector matches the query. Unlike `ILIKE '%...%'`, it matches word forms, can be **ranked** with `ts_rank` and is indexable with **GIN**.",
+    "followUps": [
+      "Why might 'ran' not match 'run'?",
+      "What's the difference between plainto_tsquery and websearch_to_tsquery?"
+    ],
+    "tags": [
+      "postgresql",
+      "full-text-search",
+      "tsvector"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-search-design",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "Full-text search",
+    "difficulty": "hard",
+    "question": "Scenario: build the product search box for your store in PostgreSQL. How would you design it?",
+    "answer": "Add a **generated `tsvector` column** combining name and description with `setweight` (name = A, description = B), so it stays in sync automatically, and a **GIN index** on it. Query with **`websearch_to_tsquery('english', $1)`** (handles quotes, `or`, `-` and never throws), filter with `@@`, order by **`ts_rank`** and paginate with LIMIT, combining with regular filters like category and price. Use `ts_headline` for highlighting, and add `pg_trgm` if you need fuzzy matching for typos.",
+    "explanation": "```sql\nALTER TABLE catalog ADD COLUMN search tsvector\n  GENERATED ALWAYS AS (\n    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||\n    setweight(to_tsvector('english', coalesce(description, '')), 'B')\n  ) STORED;\nCREATE INDEX catalog_search_idx ON catalog USING gin (search);\n\nSELECT id, name, ts_rank(search, q) AS rank\nFROM catalog, websearch_to_tsquery('english', $1) AS q\nWHERE search @@ q\nORDER BY rank DESC\nLIMIT 20;\n```\nIn the lesson this took a search over 100k products from a 26 ms Seq Scan to 0.2 ms with a Bitmap Index Scan.",
+    "followUps": [
+      "Why use a generated column instead of an expression index?",
+      "How do you handle multiple languages?"
+    ],
+    "tags": [
+      "postgresql",
+      "full-text-search",
+      "gin",
+      "scenario"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-vs-elasticsearch",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "Full-text search",
+    "difficulty": "hard",
+    "question": "When would you move product search from PostgreSQL full-text search to Elasticsearch or OpenSearch?",
+    "answer": "Stay in PostgreSQL while search is 'find products by words' on up to millions of rows: it's **transactionally consistent**, has no sync pipeline and no extra cluster. Move to a search engine when you need **typo tolerance and fuzzy matching**, rich **relevance tuning** (BM25, synonyms, boosting), **facets and aggregations** over large result sets, autocomplete, or heavy search traffic you want off the primary database. The cost is another system to operate and **eventual consistency** between the database and the index.",
+    "followUps": [
+      "How would you keep Elasticsearch in sync with PostgreSQL?",
+      "What can pg_trgm add before you migrate?"
+    ],
+    "tags": [
+      "postgresql",
+      "full-text-search",
+      "elasticsearch",
+      "trade-offs"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-vs-mongodb",
+    "lessonSlug": "postgres-jsonb-and-full-text",
+    "topic": "JSONB",
+    "difficulty": "hard",
+    "question": "With JSONB, can PostgreSQL replace MongoDB? What would you tell a team choosing between them?",
+    "answer": "For a **relational core with some flexible data**, yes: JSONB gives schema-less attributes, GIN indexing and containment queries, plus SQL joins, foreign keys and multi-row ACID transactions MongoDB handles less naturally. MongoDB still wins when the data is **document-shaped throughout**, when you rely on **in-place partial updates** of large documents (`$set`, `$push`; PostgreSQL rewrites the whole value), and when you need **built-in horizontal sharding**. I'd choose by data shape and scale, not by 'SQL vs NoSQL' preference.",
+    "followUps": [
+      "Where does JSONB's lack of statistics hurt?",
+      "How does MongoDB's $lookup compare to SQL joins?"
+    ],
+    "tags": [
+      "postgresql",
+      "jsonb",
+      "mongodb",
+      "comparison"
+    ]
+  }
+]

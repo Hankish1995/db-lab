@@ -1,0 +1,85 @@
+[
+  {
+    "slug": "concurrency-and-locking-race-condition",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Concurrency",
+    "difficulty": "easy",
+    "question": "Two users buy the last item at the same time and both orders succeed. What went wrong?",
+    "answer": "A **race condition**, specifically a **lost update**: both requests **read** `stock = 1`, both passed the check in application code, and both **wrote** `stock = 0`, so one decrement overwrote the other. The read-check-write sequence wasn't atomic. The simplest fix is a single conditional update: `UPDATE products SET stock = stock - 1 WHERE id = ? AND stock > 0`, and treat 0 updated rows as sold out.",
+    "followUps": ["Why does wrapping it in a transaction at read committed not fix it?", "How would you do the same in MongoDB?"],
+    "tags": ["concurrency", "lost-update"]
+  },
+  {
+    "slug": "concurrency-and-locking-anomalies",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Isolation",
+    "difficulty": "medium",
+    "question": "Explain dirty read, non-repeatable read and phantom read.",
+    "answer": "A **dirty read** is reading another transaction's **uncommitted** change, which might be rolled back. A **non-repeatable read** is reading the **same row twice** in one transaction and getting different values because someone committed an update in between. A **phantom read** is running the **same query twice** and getting a different **set of rows** because someone inserted or deleted matching rows. Each stricter isolation level removes more of them.",
+    "followUps": ["Which isolation level prevents each?", "What is write skew and why don't the standard levels mention it?"],
+    "tags": ["isolation", "anomalies"]
+  },
+  {
+    "slug": "concurrency-and-locking-isolation-levels-postgres",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Isolation",
+    "difficulty": "hard",
+    "question": "What are the SQL isolation levels, and how does PostgreSQL implement them differently from the standard?",
+    "answer": "The standard defines **read uncommitted, read committed, repeatable read and serializable**, preventing progressively dirty reads, non-repeatable reads and phantoms. PostgreSQL is stricter: read uncommitted behaves as **read committed** (its default), so dirty reads never happen; **repeatable read** is **snapshot isolation**, which also prevents phantoms and errors on concurrent updates to the same row; **serializable** uses **SSI**, which also prevents write skew by aborting one of the conflicting transactions. At the higher levels your application must **retry** on serialization failures (SQLSTATE `40001`).",
+    "followUps": ["What is MySQL InnoDB's default isolation level?", "Why can write skew still happen under snapshot isolation?"],
+    "tags": ["isolation", "postgresql", "mvcc"]
+  },
+  {
+    "slug": "concurrency-and-locking-write-skew",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Isolation",
+    "difficulty": "hard",
+    "question": "What is write skew? Give an e-commerce example and how to prevent it.",
+    "answer": "Write skew is when two transactions **read the same data**, each decides based on it, and they write **different rows**, so together they break a rule that each alone respected. Example: \"one WELCOME coupon per customer\": two tabs both count redemptions (0) and both insert one. Row locks don't help because the conflicting rows don't exist yet. Prevent it with a **constraint** (`UNIQUE (customer_id, code)`), the **serializable** isolation level with retries, or by locking a shared row (e.g. the customer row `FOR UPDATE`) before checking.",
+    "followUps": ["Does PostgreSQL's repeatable read prevent this?"],
+    "tags": ["isolation", "write-skew"]
+  },
+  {
+    "slug": "concurrency-and-locking-pessimistic-vs-optimistic",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "Pessimistic vs optimistic locking: how do they work and when do you use each?",
+    "answer": "**Pessimistic** locking takes a lock before working (`SELECT ... FOR UPDATE`), so other transactions **wait**; it suits **high contention**, like a flash-sale item. **Optimistic** locking takes no lock: read a **version**, then update `WHERE id = ? AND version = ?`, and if 0 rows changed, someone else won and you **retry**; it suits **rare conflicts** and edits that span HTTP requests. Optimistic on a hot row causes retry storms; pessimistic on cold data adds needless waiting and deadlock risk.",
+    "explanation": "```sql\nUPDATE products\nSET stock = 4, version = version + 1\nWHERE product_id = 1 AND version = 7;  -- 0 rows = conflict\n```\nIn Mongoose, the schema option `optimisticConcurrency: true` makes `save()` include `__v` in the filter and throw a `VersionError` on conflict (it doesn't apply to `updateOne`/`findOneAndUpdate`).",
+    "followUps": ["What do FOR UPDATE NOWAIT and SKIP LOCKED do?", "How does Mongoose's default versioning differ from optimisticConcurrency?"],
+    "tags": ["locking", "optimistic-locking", "pessimistic-locking"]
+  },
+  {
+    "slug": "concurrency-and-locking-mongodb-atomic-decrement",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "MongoDB",
+    "difficulty": "medium",
+    "question": "How do you safely decrement stock in MongoDB without overselling?",
+    "answer": "Use a single **atomic, conditional** `updateOne`: filter on the product **and** sufficient stock, and decrement with `$inc`. Single-document writes are atomic, so two concurrent buyers can't both match the last unit; check `modifiedCount` and treat 0 as sold out. If you also create an order document, put both writes in a **transaction** (`session.withTransaction`) so they succeed or fail together.",
+    "explanation": "```js\nconst res = db.products.updateOne(\n  { _id: 1, stock: { $gte: 2 } },\n  { $inc: { stock: -2 } }\n)\n// res.modifiedCount === 0 -> not enough stock\n```",
+    "followUps": ["Why is findOne followed by save() unsafe here?", "What happens when two MongoDB transactions write the same document?"],
+    "tags": ["mongodb", "concurrency", "atomic-update"]
+  },
+  {
+    "slug": "concurrency-and-locking-deadlocks",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Deadlocks",
+    "difficulty": "medium",
+    "question": "What is a deadlock, how does the database handle it, and how do you avoid it?",
+    "answer": "A deadlock is a **cycle of waiting**: T1 holds a lock T2 needs while T2 holds a lock T1 needs, e.g. two carts locking Mouse and Keyboard in opposite order. PostgreSQL checks for cycles after a lock wait exceeds `deadlock_timeout` (1 second by default) and **aborts one transaction** with `deadlock detected` (SQLSTATE `40P01`). Avoid them with a **consistent lock order** (sort product IDs before locking), **short transactions** with no external calls inside, fewer locks via atomic statements, and **retry** logic for the victim.",
+    "followUps": ["Why do deadlocks still happen even with careful code?"],
+    "tags": ["deadlocks", "locking"]
+  },
+  {
+    "slug": "concurrency-and-locking-scenario-flash-sale",
+    "lessonSlug": "concurrency-and-locking",
+    "topic": "Concurrency",
+    "difficulty": "hard",
+    "question": "Scenario: you're designing checkout for a flash sale where 10,000 users hit the same product. How do you prevent overselling and keep it fast?",
+    "answer": "I'd make the stock decrement a **single atomic conditional statement** (`UPDATE ... SET stock = stock - :qty WHERE id = :id AND stock >= :qty`, or MongoDB `updateOne` with `$inc` and a `stock: { $gte: qty }` filter) in a **short transaction** together with the order insert, and add a `CHECK (stock >= 0)` constraint as a safety net. Optimistic locking would cause a retry storm on one hot row, and holding `FOR UPDATE` while calling the payment gateway would queue everyone, so payment happens **after** reserving stock, with a timeout that releases the reservation. If the single row becomes the bottleneck, I'd queue purchase requests or split stock into several bucket rows.",
+    "explanation": "```sql\nBEGIN;\nUPDATE products SET stock = stock - 1\nWHERE product_id = 1 AND stock >= 1;\n-- 0 rows -> ROLLBACK, sold out\nINSERT INTO orders (customer_id, product_id, qty, status)\nVALUES (7, 1, 1, 'reserved');\nCOMMIT;\n```\nAt read committed this is safe because the second UPDATE waits for the row lock, then re-evaluates the WHERE clause against the committed row.",
+    "followUps": ["How would you release reservations for unpaid orders?", "Would you raise the isolation level to serializable here?"],
+    "tags": ["concurrency", "scenario", "inventory"]
+  }
+]

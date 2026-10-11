@@ -1,0 +1,143 @@
+[
+  {
+    "slug": "postgres-explain-vs-explain-analyze",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "easy",
+    "question": "What is the difference between EXPLAIN and EXPLAIN ANALYZE in PostgreSQL?",
+    "answer": "`EXPLAIN` shows the plan the planner **intends** to use, with **estimated** costs and row counts, without running the query. `EXPLAIN ANALYZE` **actually executes** the query and adds real timings, real row counts and loop counts per node. Adding `BUFFERS` also shows how many pages were read from cache or from the OS. Because ANALYZE really runs the statement, wrap INSERT/UPDATE/DELETE in `BEGIN ... ROLLBACK`.",
+    "explanation": "```sql\nBEGIN;\nEXPLAIN (ANALYZE, BUFFERS)\nUPDATE products SET price = price * 1.1 WHERE category = 'toys';\nROLLBACK;\n```",
+    "followUps": [
+      "What does the cost number mean?",
+      "Why might EXPLAIN ANALYZE be slower than the real query?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain"
+    ]
+  },
+  {
+    "slug": "postgres-explain-read-a-plan",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "easy",
+    "question": "How do you read a PostgreSQL query plan? What do cost, rows, actual time and loops mean?",
+    "answer": "A plan is a **tree**: execution starts at the most indented nodes and rows flow **upwards** to the parent. `cost=startup..total` is in abstract planner units and includes the children. `rows` is the **estimated** rows per execution; `actual time=first..last` is real milliseconds and `rows` next to it is real rows, both **per loop**. So you multiply by `loops`: a node with `rows=10 loops=20` produced about 200 rows.",
+    "followUps": [
+      "What does width mean?",
+      "Why is loops=3 in a parallel plan?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "query-plan"
+    ]
+  },
+  {
+    "slug": "postgres-explain-scan-types",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "medium",
+    "question": "Explain Seq Scan, Index Scan, Index Only Scan and Bitmap Heap Scan. When does PostgreSQL choose each?",
+    "answer": "**Seq Scan** reads the whole table: best when a large fraction of rows match or no index helps. **Index Scan** walks the index and fetches each row from the heap: best for few rows or for `ORDER BY ... LIMIT` in index order. **Index Only Scan** answers from the index alone when all columns are in it and pages are all-visible in the visibility map. **Bitmap Index + Bitmap Heap Scan** collects matching pages into a bitmap and reads each page once in physical order: best for a medium number of scattered rows, and it can combine several indexes.",
+    "explanation": "In a 500k-row `orders` table, `created_at >= now() - 7 days` (~1% of rows) used a bitmap scan, while `>= now() - 600 days` (~82%) used a parallel seq scan even though the index existed. Reading most of a table through an index means random I/O and is slower than reading it sequentially.",
+    "followUps": [
+      "What does Heap Fetches mean on an Index Only Scan?",
+      "Why is there a Recheck Cond on a bitmap heap scan?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "indexes"
+    ]
+  },
+  {
+    "slug": "postgres-explain-join-algorithms",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "medium",
+    "question": "What are the three join algorithms in PostgreSQL and when is each one chosen?",
+    "answer": "**Nested Loop**: for each outer row, look up matches in the inner input; ideal when the outer side is small and the inner side has an index, and it's the only one that handles non-equality conditions. **Hash Join**: build a hash table from the smaller input and probe it with the larger; ideal for big unsorted inputs with an equality condition. **Merge Join**: walk two inputs already sorted on the join key in step; ideal when both come sorted from indexes or are large.",
+    "followUps": [
+      "What does Batches: 2 mean on a Hash node?",
+      "Why might the planner pick a nested loop wrongly?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "joins"
+    ]
+  },
+  {
+    "slug": "postgres-explain-estimates-vs-actual",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "medium",
+    "question": "In EXPLAIN ANALYZE, the planner estimated 1 row but the node returned 199,000. What does that tell you and how do you fix it?",
+    "answer": "The planner's **statistics are wrong**, usually stale after a bulk load or never collected. Because it expected 1 row it probably chose a **nested loop** that then ran 199,000 times. Run `ANALYZE` on the table (and check autovacuum is keeping up); for correlated columns add `CREATE STATISTICS`, and for skewed columns raise the statistics target. After ANALYZE the planner can switch to a hash or merge join.",
+    "explanation": "Real example from the lesson: a stale `coupons` table produced `Nested Loop (rows=1) (actual rows=199000)` with an inner index scan at `loops=199000`, 284 ms. After `ANALYZE coupons` the plan became a Merge Join at 77 ms.",
+    "followUps": [
+      "When does autovacuum run ANALYZE?",
+      "What are extended statistics?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "statistics"
+    ]
+  },
+  {
+    "slug": "postgres-explain-sort-spill",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "medium",
+    "question": "A plan shows 'Sort Method: external merge Disk: 28376kB'. What does it mean and what can you do?",
+    "answer": "The sort needed more memory than **`work_mem`** (default 4 MB), so it **spilled to temporary files** on disk, which is much slower than an in-memory quicksort. First reduce the work: add a `LIMIT` (enables a top-N heapsort), select fewer columns, or add an index that returns rows already sorted. If the big sort is really needed, raise `work_mem` **for that session or role**, not globally, because it applies per sort/hash node per connection.",
+    "followUps": [
+      "What is hash_mem_multiplier?",
+      "How does BUFFERS show the spill?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "work-mem"
+    ]
+  },
+  {
+    "slug": "postgres-explain-pg-stat-statements",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "medium",
+    "question": "How do you find which queries to optimize in a production PostgreSQL database?",
+    "answer": "Use the **`pg_stat_statements`** extension (loaded via `shared_preload_libraries`), which aggregates calls, total and mean execution time, rows and block I/O per normalized query. Sort by **`total_exec_time`** to find what costs the most overall, because a fast query called millions of times often beats a rare slow report. Then run `EXPLAIN (ANALYZE, BUFFERS)` on those with realistic parameters, and use `auto_explain` to log plans of slow queries as they happen.",
+    "followUps": [
+      "Why sort by total time rather than mean time?",
+      "What does auto_explain add?"
+    ],
+    "tags": [
+      "postgresql",
+      "pg-stat-statements",
+      "performance"
+    ]
+  },
+  {
+    "slug": "postgres-explain-slow-query-scenario",
+    "lessonSlug": "postgres-explain",
+    "topic": "EXPLAIN",
+    "difficulty": "hard",
+    "question": "Scenario: the 'My orders' page became slow after the orders table grew to millions of rows. Walk me through how you diagnose and fix it.",
+    "answer": "First confirm the query and its cost in **`pg_stat_statements`**, then run **`EXPLAIN (ANALYZE, BUFFERS)`** with a real customer id. I'd look for a **Seq Scan with a huge Rows Removed by Filter**, an **explicit Sort**, and whether estimated rows match actual rows. The usual fix is a composite index matching both filter and order, `CREATE INDEX CONCURRENTLY ON orders (customer_id, created_at DESC)`, plus a `LIMIT` with keyset pagination, which turns the plan into an Index Scan that stops after one page. Then re-run EXPLAIN to verify, and check that estimates are sane (ANALYZE) and that the foreign key column on order_items is indexed too.",
+    "explanation": "Real numbers from the lesson: Parallel Seq Scan + Sort over 500k orders: 76.8 ms and 4,786 pages. After the composite index with LIMIT 5: Index Scan, 0.118 ms, 11 pages.\n\n```sql\nSELECT id, total, created_at\nFROM orders\nWHERE customer_id = $1 AND created_at < $2  -- keyset cursor\nORDER BY created_at DESC\nLIMIT 20;\n```",
+    "followUps": [
+      "Why CONCURRENTLY?",
+      "Why is OFFSET pagination slow on deep pages?",
+      "What if it's fast in psql but slow from the app?"
+    ],
+    "tags": [
+      "postgresql",
+      "explain",
+      "indexes",
+      "scenario"
+    ]
+  }
+]

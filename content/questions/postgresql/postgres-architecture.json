@@ -1,0 +1,97 @@
+[
+  {
+    "slug": "postgres-architecture-query-lifecycle",
+    "lessonSlug": "postgres-architecture",
+    "topic": "PostgreSQL architecture",
+    "difficulty": "easy",
+    "question": "What happens inside PostgreSQL when your app sends a SQL query?",
+    "answer": "The connection is served by its own **backend process**. That process runs the query through four stages: the **parser** checks syntax and resolves table and column names, the **rewriter** expands views and applies rules, the **planner** estimates the cost of alternative plans using table statistics and picks the cheapest, and the **executor** runs that plan, reading pages through **shared buffers** and streaming rows back.",
+    "explanation": "`EXPLAIN` shows you the planner's output. A syntax error or unknown column fails in the parser stage; a slow query because of a missing index is a planner/executor story.",
+    "followUps": ["How are views implemented?", "Where do the planner's row estimates come from?"],
+    "tags": ["postgresql", "architecture", "planner"]
+  },
+  {
+    "slug": "postgres-architecture-process-per-connection",
+    "lessonSlug": "postgres-architecture",
+    "topic": "PostgreSQL architecture",
+    "difficulty": "easy",
+    "question": "Why are PostgreSQL connections considered expensive?",
+    "answer": "PostgreSQL uses a **process per connection**: the postmaster starts a new OS process for every client. Creating it takes time (process start, authentication, often TLS, cache warm-up), each one uses its own memory, and hundreds of active processes contend for CPU and locks. That's why `max_connections` is small (default 100) and why apps should reuse connections through a **pool** instead of connecting per request.",
+    "followUps": ["What is PgBouncer?", "How would you size a Node.js pg pool?"],
+    "tags": ["postgresql", "connections", "pooling"]
+  },
+  {
+    "slug": "postgres-architecture-database-vs-schema",
+    "lessonSlug": "postgres-architecture",
+    "topic": "PostgreSQL architecture",
+    "difficulty": "easy",
+    "question": "What is the difference between a database and a schema in PostgreSQL?",
+    "answer": "A **cluster** (one server instance) holds several **databases**; each database holds **schemas**, which are namespaces for tables, views and functions. A connection is bound to **one database**, so you can't join across databases without extensions like `postgres_fdw`, but you can freely query across schemas (`analytics.daily_revenue`). Roles are shared by the whole cluster, and unqualified names resolve via `search_path`.",
+    "followUps": ["What is search_path?", "When would you use separate schemas instead of separate databases?"],
+    "tags": ["postgresql", "schema", "database"]
+  },
+  {
+    "slug": "postgres-architecture-wal-durability",
+    "lessonSlug": "postgres-architecture",
+    "topic": "Write-ahead log",
+    "difficulty": "medium",
+    "question": "What is the write-ahead log (WAL) and how does it make commits durable?",
+    "answer": "The WAL is an append-only journal of every change. A change is applied to the page in **shared buffers** and described in a WAL record; on `COMMIT`, PostgreSQL only has to **flush the WAL** up to the commit record, a cheap sequential write. The changed table pages are written later by the background writer and checkpointer. If the server crashes, **crash recovery replays the WAL** from the last checkpoint, so every committed change is restored.",
+    "explanation": "This is why commits are fast: one sequential fsync instead of many random page writes. The same WAL stream is also what replicas replay and what point-in-time recovery uses.",
+    "followUps": ["What is a checkpoint?", "What does synchronous_commit = off change?", "What are full-page writes?"],
+    "tags": ["postgresql", "wal", "durability"]
+  },
+  {
+    "slug": "postgres-architecture-checkpoints",
+    "lessonSlug": "postgres-architecture",
+    "topic": "Write-ahead log",
+    "difficulty": "medium",
+    "question": "What is a checkpoint, and what is the trade-off in how often it happens?",
+    "answer": "A **checkpoint** writes all dirty pages from shared buffers to the data files and records a point from which crash recovery can start; WAL older than that can be recycled. It runs every `checkpoint_timeout` (default 5 min) or when `max_wal_size` of WAL has accumulated. **Frequent** checkpoints mean faster recovery but more I/O and more full-page images in WAL; **rare** checkpoints mean less I/O but longer recovery after a crash.",
+    "followUps": ["What does the log message 'checkpoints are occurring too frequently' tell you?", "What is checkpoint_completion_target for?"],
+    "tags": ["postgresql", "checkpoint", "wal"]
+  },
+  {
+    "slug": "postgres-architecture-shared-buffers",
+    "lessonSlug": "postgres-architecture",
+    "topic": "Memory",
+    "difficulty": "medium",
+    "question": "What are shared buffers, and why isn't shared_buffers set to most of the RAM?",
+    "answer": "**Shared buffers** is PostgreSQL's cache of 8 KB data and index pages, shared by all backends. PostgreSQL also relies on the **OS page cache** underneath it (double buffering), and every backend needs private memory for sorts and hashes (`work_mem`). So a common starting point is about **25% of RAM** for `shared_buffers`; `effective_cache_size` then tells the planner how much total caching to expect.",
+    "explanation": "`EXPLAIN (ANALYZE, BUFFERS)` shows `shared hit` (found in shared buffers) vs `read` (requested from the OS, which may still come from the OS cache rather than disk).",
+    "followUps": ["What is work_mem and why is it dangerous to set it very high?", "What does Buffers: shared read mean?"],
+    "tags": ["postgresql", "memory", "shared-buffers"]
+  },
+  {
+    "slug": "postgres-architecture-toast",
+    "lessonSlug": "postgres-architecture",
+    "topic": "Storage",
+    "difficulty": "medium",
+    "question": "How does PostgreSQL store a row with a very large text or jsonb value?",
+    "answer": "Rows live in 8 KB heap pages and a row can't span pages. When a row exceeds about **2 KB**, PostgreSQL uses **TOAST**: it compresses large values and, if still too big, moves them **out of line** into the table's TOAST table in chunks, leaving a pointer in the main row. A field can be up to 1 GB. Queries that don't select those columns stay fast, but `SELECT *` pays to fetch and decompress them.",
+    "followUps": ["What is a ctid?", "Why can updating a big jsonb document be expensive?"],
+    "tags": ["postgresql", "toast", "storage"]
+  },
+  {
+    "slug": "postgres-architecture-crash-after-commit",
+    "lessonSlug": "postgres-architecture",
+    "topic": "Write-ahead log",
+    "difficulty": "hard",
+    "question": "The server loses power one millisecond after COMMIT returned to your app. The changed table page was never written to disk. Is the order lost?",
+    "answer": "No. With the default `synchronous_commit = on`, COMMIT only returns after the **WAL record is flushed** to durable storage. On restart, PostgreSQL runs **crash recovery** from the last checkpoint and **replays** the WAL, redoing the change on the page. The exceptions are settings that break that promise: `synchronous_commit = off` can lose the last fraction of a second of commits (without corruption), and `fsync = off` or a disk that lies about flushing can corrupt the database.",
+    "explanation": "Interview gold: distinguish **losing recent commits** (synchronous_commit off, a deliberate trade-off) from **corruption** (fsync off, never acceptable in production). Torn pages from a half-written 8 KB page are handled by full-page images written to WAL after each checkpoint.",
+    "followUps": ["When would you accept synchronous_commit = off?", "How do replicas use the same WAL?"],
+    "tags": ["postgresql", "wal", "durability", "scenario"]
+  },
+  {
+    "slug": "postgres-architecture-too-many-clients",
+    "lessonSlug": "postgres-architecture",
+    "topic": "PostgreSQL architecture",
+    "difficulty": "hard",
+    "question": "After scaling your Node.js API from 3 to 15 pods, PostgreSQL starts returning 'sorry, too many clients already'. What is happening and how do you fix it?",
+    "answer": "Every pod has its own pool, so total connections = pods × pool size; 15 pods × 20 = 300, but `max_connections` is 100, and every connection is a full backend process. Raising `max_connections` a lot only moves the problem to memory and CPU contention. The fix: shrink per-pod pools, put a **connection pooler** like PgBouncer (transaction mode) between the app and the database, keep transactions short so connections are returned quickly, and monitor `pg_stat_activity` for idle-in-transaction sessions.",
+    "explanation": "A useful mental model: the database can only do as much work in parallel as it has CPU cores and disk bandwidth. A few dozen busy connections usually beats hundreds of mostly idle ones.",
+    "followUps": ["What breaks in PgBouncer transaction mode?", "What is 'idle in transaction' and why is it harmful?"],
+    "tags": ["postgresql", "connections", "pooling", "scenario"]
+  }
+]

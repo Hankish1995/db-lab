@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "scaling-databases-vertical-vs-horizontal",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "easy",
+    "question": "What is the difference between vertical and horizontal scaling for a database?",
+    "answer": "**Vertical scaling** means a bigger machine (more CPU, RAM, faster disks): no code changes, but there's a ceiling, cost grows steeply at the top end, and it's still one point of failure. **Horizontal scaling** means more machines: read replicas for reads, sharding for writes and storage. It scales much further but adds complexity: replication lag, routing, cross-shard queries.",
+    "explanation": "Vertical scaling is underrated: after query and index tuning, a larger instance is often the cheapest next step for a growing app.",
+    "followUps": ["Why are app servers easier to scale horizontally than databases?", "When would you stop scaling vertically?"],
+    "tags": ["scaling", "vertical-scaling", "horizontal-scaling"]
+  },
+  {
+    "slug": "scaling-databases-stateless-app-servers",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "easy",
+    "question": "What does it mean for app servers to be stateless, and why does it matter for scaling?",
+    "answer": "A **stateless** server keeps no user data between requests in its own memory or disk: sessions live in Redis or a signed token, files in object storage, data in the database. Any instance can then serve any request, so you scale by adding instances behind a load balancer and can kill or replace them freely. If killing an instance logs users out or loses a cart, it isn't stateless.",
+    "followUps": ["Where would you store sessions?", "What are sticky sessions and why avoid them?"],
+    "tags": ["scaling", "stateless", "architecture"]
+  },
+  {
+    "slug": "scaling-databases-why-p99",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "medium",
+    "question": "Why do we look at p95/p99 latency instead of average latency?",
+    "answer": "Averages hide the slow tail: 99 requests at 20 ms and one at 3 s average about 50 ms, which looks healthy while 1% of users wait 3 seconds. **p99** is the latency 99% of requests beat, so it shows what your unluckiest users feel. It matters even more when one page fans out to many backend calls, because the chance that at least one call is slow grows with the number of calls.",
+    "followUps": ["Which database metrics would you watch alongside latency?", "How would you find the queries causing p99 spikes?"],
+    "tags": ["scaling", "observability", "latency"]
+  },
+  {
+    "slug": "scaling-databases-connection-pooling",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "medium",
+    "question": "Your app autoscaled to 60 instances and PostgreSQL started failing with \"too many connections\". What happened and how do you fix it?",
+    "answer": "Each instance opens its own pool, so total connections = instances × pool size, and autoscaling multiplies it. PostgreSQL uses a process per connection, so hundreds of mostly idle connections waste memory and add contention. Fix it by **sizing pools deliberately** (smaller per instance), adding a **connection pooler** such as PgBouncer so many client connections share a few server connections, and failing fast with a connection timeout instead of queueing forever.",
+    "explanation": "Little's law helps size it: concurrent queries ≈ QPS × average query time. 2,000 QPS × 5 ms ≈ 10 queries in flight, far fewer than 60 × 20 = 1,200 connections.",
+    "followUps": ["What is the difference between session and transaction pooling in PgBouncer?", "How does MongoDB's driver pool differ?"],
+    "tags": ["scaling", "connection-pooling", "postgresql"]
+  },
+  {
+    "slug": "scaling-databases-replicas-vs-sharding",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "medium",
+    "question": "When would you add read replicas, and when would you shard instead?",
+    "answer": "**Read replicas** help when the load is mostly **reads** that can tolerate slight staleness: every replica holds all the data, so they don't help writes or storage, since each replica must apply every write. **Sharding** splits data so each server handles part of the **writes and storage**. So: read-heavy and fits on one machine → cache and replicas; write throughput or data size beyond one primary → shard.",
+    "followUps": ["What problems does replication lag cause?", "What would you try before sharding?"],
+    "tags": ["scaling", "read-replicas", "sharding"]
+  },
+  {
+    "slug": "scaling-databases-cqrs-polyglot",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "medium",
+    "question": "What is polyglot persistence, and when is it worth it?",
+    "answer": "**Polyglot persistence** means using different data stores for different jobs: a relational DB for orders and payments, Redis for caching and sessions, a search engine for product search, a warehouse for analytics. The primary DB stays the **source of truth** and the others are fed by events or CDC, so they're eventually consistent. It's worth it when workloads fight each other or the main DB is the wrong tool (e.g. fuzzy search), and premature when one database serves every query fine.",
+    "followUps": ["How do you keep the search index in sync with the database?", "What is CQRS?"],
+    "tags": ["scaling", "polyglot-persistence", "cqrs"]
+  },
+  {
+    "slug": "scaling-databases-slow-store-scenario",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "hard",
+    "question": "Scenario: an e-commerce site's p99 latency jumped from 200 ms to 2 s after a marketing campaign. Walk through how you diagnose and fix it.",
+    "answer": "First **measure** to find the bottleneck: app vs DB time, DB CPU, IOPS and cache hit ratio, active connections, slow queries (`pg_stat_statements`), replication lag. Then fix in order of cost: missing indexes or N+1 queries found by `EXPLAIN ANALYZE`; connection exhaustion → right-size pools / PgBouncer; repeated hot reads (product pages) → Redis/CDN cache; remaining read load → replicas for lag-tolerant reads; still CPU-bound → bigger instance. Sharding is a last resort and only if writes or data size are the limit.",
+    "explanation": "Interviewers want to hear **measure first**, and a ladder of fixes with the cheapest, most reversible steps first. Mention that campaigns cause skew: a few hot products, so caching usually gives the biggest win.",
+    "followUps": ["What if the problem is write-heavy instead?", "How would you protect checkout from browsing traffic?"],
+    "tags": ["scaling", "scenario", "performance"]
+  },
+  {
+    "slug": "scaling-databases-10m-users-design",
+    "lessonSlug": "scaling-databases",
+    "topic": "Scaling",
+    "difficulty": "hard",
+    "question": "Design the data tier for an e-commerce store growing from 10k to 10 million users. What do you add, in what order, and why?",
+    "answer": "Start with one well-indexed relational database and stateless app servers. As load grows: tune queries and indexes, scale vertically, add a **connection pooler**, then **cache** hot reads (Redis + CDN), add **read replicas** for lag-tolerant reads, **partition** and archive huge tables like orders, and **shard** only when one primary can't take the writes or the data. At the top, split read models (CQRS): search engine for products, warehouse for analytics, fed by CDC. Each step is triggered by a measured bottleneck, not by user count.",
+    "explanation": "A strong answer adds numbers: 1M daily users × 20 page views ≈ 230 views/s average, maybe 2,000/s at peak, mostly reads; orders might be 50k/day ≈ under 1 write/s. That shows sharding the orders table is unlikely to be needed for write throughput.",
+    "followUps": ["Which of these steps adds eventual consistency?", "What data must always come from the primary?"],
+    "tags": ["scaling", "system-design", "architecture"]
+  }
+]

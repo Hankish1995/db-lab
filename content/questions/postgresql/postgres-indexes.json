@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "postgres-indexes-types-overview",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "easy",
+    "question": "What index types does PostgreSQL offer, and when would you use each?",
+    "answer": "**B-tree** (default): equality, ranges, sorting, prefix LIKE. **GIN**: \"contains\" queries on jsonb, arrays and full-text. **GiST**: ranges, geometry, nearest-neighbour and exclusion constraints. **BRIN**: tiny min/max summaries for huge tables whose values follow physical order, like append-only logs. **Hash**: equality only, rarely better than a B-tree. On top of these you can make an index **partial**, **expression-based**, **multicolumn** or **covering** with `INCLUDE`.",
+    "followUps": ["Which one would you use for a jsonb attributes column?", "Why not just use B-tree for everything?"],
+    "tags": ["postgresql", "indexes", "gin", "gist", "brin"]
+  },
+  {
+    "slug": "postgres-indexes-partial-index",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "easy",
+    "question": "What is a partial index? Give an e-commerce example.",
+    "answer": "A **partial index** includes only rows matching a `WHERE` predicate. Example: only 3% of orders are pending, and the dashboard only queries pending ones, so `CREATE INDEX ON orders (created_at) WHERE status = 'pending'` is tiny (352 kB vs 11 MB for all rows in my test), fast, and cheaper on writes. The planner uses it only when the query's WHERE implies the predicate. A partial **unique** index also enforces rules like \"one active cart per user\".",
+    "followUps": ["Would the index be used for WHERE status = 'paid'?", "How do you enforce one active cart per user?"],
+    "tags": ["postgresql", "indexes", "partial-index"]
+  },
+  {
+    "slug": "postgres-indexes-expression-index",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "medium",
+    "question": "Why doesn't an index on email help WHERE lower(email) = 'a@x.io', and how do you fix it?",
+    "answer": "The B-tree is sorted by `email`, not by `lower(email)`, so the planner can't seek into it and falls back to a sequential scan. Create an **expression index**: `CREATE INDEX ON users (lower(email))` (or `UNIQUE` to enforce case-insensitive uniqueness). The query must use exactly the same expression, and you pay the function's CPU cost on every write.",
+    "followUps": ["Why might LIKE 'abc%' not use a normal B-tree index?", "What is text_pattern_ops?"],
+    "tags": ["postgresql", "indexes", "expression-index"]
+  },
+  {
+    "slug": "postgres-indexes-covering-visibility-map",
+    "lessonSlug": "postgres-indexes",
+    "topic": "Index-only scans",
+    "difficulty": "medium",
+    "question": "What is an index-only scan in PostgreSQL, and why does EXPLAIN sometimes show Heap Fetches for it?",
+    "answer": "An **Index Only Scan** answers the query from the index alone, when the index contains every needed column (often via `INCLUDE`). But because of **MVCC**, the index doesn't know if a row version is visible to your transaction, so PostgreSQL checks the **visibility map**: if the page is marked all-visible, it skips the table; otherwise it fetches the row, counted as **Heap Fetches**. Recently updated pages aren't all-visible until VACUUM runs, so index-only scans work best on tables that are vacuumed well.",
+    "explanation": "In a test, the same query showed `Heap Fetches: 0` after VACUUM, 28 after updating those rows, and 0 again after the next VACUUM.",
+    "followUps": ["What's the difference between a key column and an INCLUDE column?"],
+    "tags": ["postgresql", "indexes", "covering-index", "mvcc"]
+  },
+  {
+    "slug": "postgres-indexes-multicolumn-order",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "medium",
+    "question": "For SELECT ... WHERE user_id = ? ORDER BY created_at DESC LIMIT 10, what index would you create and why?",
+    "answer": "`CREATE INDEX ON orders (user_id, created_at DESC)`. The equality column goes first, so PostgreSQL jumps to that user's entries; within them, the entries are already in `created_at DESC` order, so there's **no Sort node** and it stops after 10 rows. An index on `user_id` alone finds the rows but still has to fetch and sort all of them.",
+    "explanation": "Real plans on 500k orders: no index 69 ms (parallel seq scan); `(user_id)` 0.14 ms with a Sort; `(user_id, created_at DESC)` 0.08 ms, plain Index Scan under a Limit.",
+    "followUps": ["Would this index help WHERE created_at > now() - interval '1 day' alone?", "Does the DESC in the index matter here?"],
+    "tags": ["postgresql", "indexes", "multicolumn", "explain"]
+  },
+  {
+    "slug": "postgres-indexes-gin-vs-brin",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "medium",
+    "question": "When would you use a GIN index and when a BRIN index?",
+    "answer": "**GIN** is an inverted index: it maps each element (jsonb key/value, array item, word) to the rows containing it, so it serves `@>`, `?`, array overlap and full-text `@@`. It's large-ish and slower to update. **BRIN** stores only min/max per range of table pages, so it's tiny and suits huge append-only tables filtered by a naturally ordered column like `created_at`. In a test on 3M page views, BRIN was 24 kB vs 64 MB for a B-tree and turned a 151 ms scan into 7 ms, but it's useless if the column isn't physically ordered.",
+    "followUps": ["How do you check whether a column is physically ordered (pg_stats.correlation)?", "Does a GIN index on jsonb help attributes->>'color' = 'red'?"],
+    "tags": ["postgresql", "indexes", "gin", "brin"]
+  },
+  {
+    "slug": "postgres-indexes-unique-index-vs-constraint",
+    "lessonSlug": "postgres-indexes",
+    "topic": "PostgreSQL indexes",
+    "difficulty": "medium",
+    "question": "What's the difference between a unique constraint and a unique index in PostgreSQL?",
+    "answer": "A **unique constraint** is implemented with a unique B-tree index, so enforcement is identical. A **unique index** can do more: it can be **partial** (`WHERE status = 'active'`) or on an **expression** (`lower(email)`). A **constraint** can be `DEFERRABLE`, is visible as a constraint in the schema, and can be named in `ON CONFLICT ON CONSTRAINT`. Foreign keys can reference either, but not a partial unique index.",
+    "followUps": ["How would you upsert against a unique index on lower(email)?"],
+    "tags": ["postgresql", "indexes", "unique", "constraints"]
+  },
+  {
+    "slug": "postgres-indexes-create-concurrently",
+    "lessonSlug": "postgres-indexes",
+    "topic": "Index operations",
+    "difficulty": "hard",
+    "question": "How do you add an index to a busy 200-million-row orders table without downtime, and what can go wrong?",
+    "answer": "Use `CREATE INDEX CONCURRENTLY`: unlike plain `CREATE INDEX`, it doesn't block inserts, updates and deletes. It's slower (two table passes, waits for running transactions) and **cannot run inside a transaction block**, so the migration tool's wrapping transaction must be disabled. If it fails (e.g. duplicates for a unique index, a deadlock, a cancel), it leaves an **INVALID** index that the planner ignores but which can still add write overhead: find it via `pg_index.indisvalid`, `DROP INDEX CONCURRENTLY`, fix the cause and retry.",
+    "followUps": ["How would you rebuild a bloated index without blocking writes?", "Why does a plain CREATE INDEX still allow reads?"],
+    "tags": ["postgresql", "indexes", "concurrently", "migrations", "scenario"]
+  },
+  {
+    "slug": "postgres-indexes-unused-and-bloat",
+    "lessonSlug": "postgres-indexes",
+    "topic": "Index operations",
+    "difficulty": "hard",
+    "question": "Writes on your orders table are getting slower and it has 14 indexes. How do you decide which to drop or fix?",
+    "answer": "Query **`pg_stat_user_indexes`** for indexes with `idx_scan = 0` (excluding unique and primary key indexes, which enforce rules) and check their size. Before dropping, confirm the stats window is long enough, check **read replicas** too (stats are per server), and look for **redundant** indexes whose columns are a leftmost prefix of another. Drop with `DROP INDEX CONCURRENTLY`. For indexes that are used but have grown from churn, rebuild with **`REINDEX INDEX CONCURRENTLY`**.",
+    "explanation": "In a test, updating every row of a 500k-row table grew a covering index from 24 MB to 47 MB; `REINDEX INDEX CONCURRENTLY` brought it back to 24 MB without blocking writes. Also consider HOT updates: fewer indexed columns means more updates can skip index maintenance entirely.",
+    "followUps": ["What is a HOT update and how do indexes affect it?", "How would you find duplicate indexes?"],
+    "tags": ["postgresql", "indexes", "bloat", "monitoring", "scenario"]
+  }
+]

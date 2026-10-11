@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "normalization-what-and-why",
+    "lessonSlug": "normalization",
+    "topic": "Normalization",
+    "difficulty": "easy",
+    "question": "What is normalization and why do we do it?",
+    "answer": "Normalization is organizing tables so that **every fact is stored in exactly one place**, driven by keys and functional dependencies. It prevents **insert, update and delete anomalies**, where duplicated data gets out of sync or gets lost. Example: storing a customer's email on every order row means an email change must touch many rows and can leave them contradicting each other.",
+    "followUps": ["What are the three anomalies?", "Up to which normal form do you usually normalize?"],
+    "tags": ["normalization", "data-modeling"]
+  },
+  {
+    "slug": "normalization-three-anomalies",
+    "lessonSlug": "normalization",
+    "topic": "Normalization",
+    "difficulty": "easy",
+    "question": "Explain insert, update and delete anomalies with an example.",
+    "answer": "With one wide `orders` table holding customer and product details: an **insert anomaly** is not being able to add a new product until someone orders it; an **update anomaly** is changing a customer's email in 39 of 40 rows so the data contradicts itself; a **delete anomaly** is deleting the only order for a product and losing the product's price with it. All three come from storing unrelated facts in one row or one fact in many rows.",
+    "followUps": ["How does splitting into customers, products, orders and order_items fix each one?"],
+    "tags": ["normalization", "anomalies"]
+  },
+  {
+    "slug": "normalization-keys-natural-vs-surrogate",
+    "lessonSlug": "normalization",
+    "topic": "Keys",
+    "difficulty": "medium",
+    "question": "What is the difference between a candidate key, a primary key and a surrogate key? Natural or surrogate primary keys?",
+    "answer": "A **candidate key** is any minimal set of columns that uniquely identifies a row; the **primary key** is the candidate key you choose as the main identifier; a **surrogate key** is a generated, meaningless ID (identity column, UUID, MongoDB `_id`) as opposed to a **natural key** like email or SKU. I usually prefer a surrogate primary key because natural keys can change and every foreign key would have to change with them, but I still put a **UNIQUE constraint on the natural key** so duplicates are impossible.",
+    "explanation": "```sql\nCREATE TABLE customers (\n  customer_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email text NOT NULL UNIQUE\n);\n```",
+    "followUps": ["What is a composite key? Give an example.", "What problems can random UUID primary keys cause?"],
+    "tags": ["keys", "primary-key", "surrogate-key"]
+  },
+  {
+    "slug": "normalization-functional-dependency",
+    "lessonSlug": "normalization",
+    "topic": "Normalization",
+    "difficulty": "medium",
+    "question": "What is a functional dependency, and how does it relate to normal forms?",
+    "answer": "A functional dependency `X → Y` means that **knowing X determines exactly one Y**, for example `customer_id → email`. Normal forms are rules about which dependencies may live in a table: 2NF forbids non-key columns depending on **part** of a composite key, 3NF forbids non-key columns depending on **other non-key columns**, and BCNF requires that **every determinant is a candidate key**. When a dependency breaks the rule, you move it to a table keyed by its determinant.",
+    "followUps": ["What is a transitive dependency?"],
+    "tags": ["normalization", "functional-dependency"]
+  },
+  {
+    "slug": "normalization-1nf-2nf-3nf",
+    "lessonSlug": "normalization",
+    "topic": "Normal forms",
+    "difficulty": "medium",
+    "question": "Explain 1NF, 2NF and 3NF with an e-commerce example.",
+    "answer": "**1NF**: atomic values and no repeating groups, so `products = 'Mouse, Keyboard'` becomes one row per order line keyed by `(order_id, product_id)`. **2NF**: no partial dependencies, so `order_date` (depends only on `order_id`) moves to `orders` and `product_name` (depends only on `product_id`) moves to `products`. **3NF**: no transitive dependencies, so `customer_email`, which depends on `customer_id` rather than `order_id`, moves to `customers`. In one line: every non-key column depends on the key, the whole key, and nothing but the key.",
+    "explanation": "Final schema: `customers(customer_id, name, email)`, `products(product_id, name, price)`, `orders(order_id, customer_id, order_date)`, `order_items(order_id, product_id, qty, unit_price)`.",
+    "followUps": ["Can a table with a single-column primary key violate 2NF?", "Is unit_price in order_items a 3NF violation?"],
+    "tags": ["normalization", "1nf", "2nf", "3nf"]
+  },
+  {
+    "slug": "normalization-bcnf-vs-3nf",
+    "lessonSlug": "normalization",
+    "topic": "Normal forms",
+    "difficulty": "hard",
+    "question": "How is BCNF different from 3NF? Give an example of a table in 3NF but not BCNF.",
+    "answer": "BCNF requires that for **every** dependency `X → Y`, X is a super key. 3NF has a loophole: it allows `X → Y` when Y is part of a candidate key. Example: `seller_managers(seller_id, category, manager)` where each seller has one manager per category and each manager covers one category. `manager → category` holds but `manager` isn't a key, so it's 3NF but not BCNF. Splitting into `managers(manager, category)` and `seller_managers(seller_id, manager)` fixes it, but the rule \"one manager per seller per category\" can no longer be enforced by a simple UNIQUE constraint, which is why 3NF is often the practical target.",
+    "followUps": ["What does dependency preservation mean?", "What is a lossless decomposition?"],
+    "tags": ["normalization", "bcnf", "3nf"]
+  },
+  {
+    "slug": "normalization-price-snapshot",
+    "lessonSlug": "normalization",
+    "topic": "Data modeling",
+    "difficulty": "medium",
+    "question": "Is storing unit_price in order_items a violation of normalization, since products already has a price?",
+    "answer": "No. `products.price` is the **current price**; `order_items.unit_price` is the **price the customer actually paid**, a different, historical fact that depends on the whole key `(order_id, product_id)`. If you only joined to `products.price`, a price change tomorrow would silently rewrite every past invoice. The same applies to shipping addresses and tax rates captured at order time.",
+    "followUps": ["What other fields should be snapshotted on an order?"],
+    "tags": ["normalization", "data-modeling"]
+  },
+  {
+    "slug": "normalization-when-to-denormalize",
+    "lessonSlug": "normalization",
+    "topic": "Denormalization",
+    "difficulty": "medium",
+    "question": "What is denormalization and when would you use it?",
+    "answer": "Denormalization is **deliberately duplicating data** to make reads cheaper, for example storing `review_count` and `avg_rating` on `products`, building wide reporting tables or materialized views, or embedding data in MongoDB documents so one fetch serves a page. You use it when reads vastly outnumber writes and you've **measured** a real read problem that indexes and caching didn't solve. The cost is that update anomalies come back: every copy must be kept in sync by transactions, triggers or background jobs.",
+    "followUps": ["How would you keep a denormalized counter in sync?", "What does 'normalize until it hurts, denormalize until it works' mean?"],
+    "tags": ["denormalization", "performance"]
+  },
+  {
+    "slug": "normalization-scenario-product-page-slow",
+    "lessonSlug": "normalization",
+    "topic": "Denormalization",
+    "difficulty": "hard",
+    "question": "Scenario: your product listing page shows each product's average rating and review count, and it's getting slow as reviews grow to millions. How do you fix it, and what are the risks?",
+    "answer": "First confirm with `EXPLAIN` that the cost is the per-request aggregation over `reviews`, and check there is an index on `reviews(product_id)`. If it's still too slow, **denormalize**: store `review_count` and `rating_sum` (or `avg_rating`) on `products` and update them in the **same transaction** as each review insert, update or delete, or refresh a materialized view on a schedule if slightly stale numbers are acceptable. The risks are drift between the counters and the real reviews, extra write work, and contention on popular products' rows, so I'd add a periodic reconciliation job.",
+    "explanation": "```sql\nBEGIN;\nINSERT INTO reviews (product_id, customer_id, rating) VALUES (1, 7, 5);\nUPDATE products\nSET review_count = review_count + 1,\n    rating_sum   = rating_sum + 5\nWHERE product_id = 1;\nCOMMIT;\n```\nIn MongoDB the same idea is `$inc` on the product document, inside a transaction if the review is a separate document.",
+    "followUps": ["Why store rating_sum instead of only avg_rating?", "How would you handle a hot product getting thousands of reviews per minute?"],
+    "tags": ["denormalization", "performance", "scenario"]
+  }
+]

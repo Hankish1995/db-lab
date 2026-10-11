@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "database-case-studies-design-approach",
+    "lessonSlug": "database-case-studies",
+    "topic": "Case studies",
+    "difficulty": "easy",
+    "question": "How do you approach a database design question in a system design interview?",
+    "answer": "Clarify **requirements** (functional and non-functional), do **back-of-the-envelope numbers** (read and write QPS, peak, storage), list the top **access patterns**, then design the **data model** and **keys/indexes** around those queries. Only then choose the **database** and justify it, describe the **scaling plan** (cache, replicas, partitioning, sharding), state what must be strongly vs eventually **consistent**, and cover **failure modes** and trade-offs.",
+    "followUps": ["Why start from queries instead of entities?", "How do you estimate QPS from daily users?"],
+    "tags": ["system-design", "interviews"]
+  },
+  {
+    "slug": "database-case-studies-301-vs-302",
+    "lessonSlug": "database-case-studies",
+    "topic": "URL shortener",
+    "difficulty": "easy",
+    "question": "In a URL shortener, should redirects use 301 or 302?",
+    "answer": "A **301 (permanent)** lets browsers and proxies cache the redirect, so repeat clicks may never reach your servers: less load, but you lose click analytics. A **302 or 307 (temporary)** sends every click through your service: more load, accurate analytics, and you can change or expire the target. Pick based on whether analytics and control matter more than load.",
+    "followUps": ["How would you record clicks without a hot row?", "How do you cache redirects server-side?"],
+    "tags": ["url-shortener", "http", "caching"]
+  },
+  {
+    "slug": "database-case-studies-url-id-generation",
+    "lessonSlug": "database-case-studies",
+    "topic": "URL shortener",
+    "difficulty": "medium",
+    "question": "How would you generate short codes for a URL shortener?",
+    "answer": "Three options. A **counter encoded in base62**: no collisions and short, but codes are guessable and the counter must be distributed (ID ranges per server or Snowflake-style IDs). A **hash** of the URL truncated to 7 characters: same URL gives the same code, but truncation collides, so you check and retry. **Random** 7-character codes: unguessable with no coordination; rely on a **unique constraint** and retry on the rare collision. 62^7 ≈ 3.5 trillion codes, plenty for billions of links.",
+    "followUps": ["How would you hand out counter ranges safely?", "What's the collision probability with random codes?"],
+    "tags": ["url-shortener", "id-generation", "base62"]
+  },
+  {
+    "slug": "database-case-studies-url-shortener-design",
+    "lessonSlug": "database-case-studies",
+    "topic": "URL shortener",
+    "difficulty": "medium",
+    "question": "Design the data tier for a URL shortener handling 100M new links per month.",
+    "answer": "Numbers: ~40 writes/s, ~4,000 redirects/s average (maybe 20,000 at peak), ~3 TB over 5 years. The redirect is a **primary-key lookup** on `links(code)`, so any key-value-friendly store works: PostgreSQL is fine at this size; DynamoDB or Cassandra give easier horizontal scaling. Cache hot `code → url` pairs in **Redis** and at the CDN since traffic is very skewed, add replicas if needed, and shard by `hash(code)` if you outgrow one primary. Send click events to a queue and aggregate them in an analytics store instead of incrementing a counter row.",
+    "followUps": ["How would you support custom aliases?", "How do you expire links?"],
+    "tags": ["url-shortener", "system-design", "scenario"]
+  },
+  {
+    "slug": "database-case-studies-prevent-overselling",
+    "lessonSlug": "database-case-studies",
+    "topic": "Checkout & inventory",
+    "difficulty": "medium",
+    "question": "How do you prevent overselling inventory in an e-commerce checkout?",
+    "answer": "Check and decrement in **one atomic conditional statement**: `UPDATE inventory SET available = available - 1 WHERE product_id = 42 AND available >= 1`; zero affected rows means sold out (MongoDB: `updateOne({ _id, available: { $gte: 1 } }, { $inc: { available: -1 } })`). For longer checkouts, **reserve** stock with an expiry when checkout starts and release expired reservations with a background job, confirming reservations with a conditional update so a late payment can't confirm an expired one. Never read stock, decide in app code, then write.",
+    "explanation": "Add a `CHECK (available >= 0)` constraint as a safety net, and see the concurrency lesson for pessimistic (`SELECT ... FOR UPDATE`) and optimistic (version column) alternatives.",
+    "followUps": ["Atomic decrement vs reservation: which gives the better customer experience?", "What if payment completes after the reservation expired?"],
+    "tags": ["inventory", "concurrency", "checkout"]
+  },
+  {
+    "slug": "database-case-studies-flash-sale-hot-row",
+    "lessonSlug": "database-case-studies",
+    "topic": "Checkout & inventory",
+    "difficulty": "hard",
+    "question": "Scenario: a flash sale sends 3,000 checkout attempts per second at one SKU, and the inventory row becomes the bottleneck. What do you do?",
+    "answer": "Every update to that row waits for the previous one to commit, so throughput is bounded by one row's lock-update-commit cycle. Keep the transaction **tiny** (no network calls inside it), put an atomic **Redis `DECR` gate** in front to turn away most losers early while the database stays the source of truth, split stock into **N sub-counters** and decrement a random bucket, or **queue** buyers and process them in order. Also limit reservations per user to stop bots hoarding stock.",
+    "explanation": "The principle: correctness comes from one atomic conditional write in the database; caches, gates and queues only reduce how many requests reach it.",
+    "followUps": ["How do you keep the Redis gate and the database consistent?", "How would sub-counters handle the last few units?"],
+    "tags": ["inventory", "hot-row", "scenario", "system-design"]
+  },
+  {
+    "slug": "database-case-studies-chat-data-model",
+    "lessonSlug": "database-case-studies",
+    "topic": "Chat",
+    "difficulty": "hard",
+    "question": "How would you store messages for a chat app with 2 billion messages per day?",
+    "answer": "That's ~23,000 writes/s and ~400 GB/day: write-heavy, append-only and huge. **Partition by `conversation_id`** (bucketed by time so partitions stay bounded), use **time-ordered message IDs** (Snowflake/ULID/`timeuuid`) as the sort key, and paginate with a **cursor** (`message_id < ?`), never `OFFSET`. Wide-column stores like Cassandra or ScyllaDB fit well: cheap LSM appends, rows sorted within a partition, linear write scaling. At moderate scale, MongoDB works with an index on `{ conversationId: 1, _id: -1 }` and a shard key starting with the conversation, optionally using the **bucket pattern** (many messages per document).",
+    "explanation": "```sql\n-- CQL\nCREATE TABLE messages (\n  conversation_id uuid, bucket int, message_id timeuuid,\n  sender_id uuid, body text,\n  PRIMARY KEY ((conversation_id, bucket), message_id)\n) WITH CLUSTERING ORDER BY (message_id DESC);\n```\nThe conversation list needs its own table keyed by user, because wide-column tables are designed per query.",
+    "followUps": ["Why not partition by user ID?", "How do you handle a group chat with 100,000 members?"],
+    "tags": ["chat", "data-modeling", "cassandra", "mongodb", "scenario"]
+  },
+  {
+    "slug": "database-case-studies-feed-fan-out",
+    "lessonSlug": "database-case-studies",
+    "topic": "Social feed",
+    "difficulty": "hard",
+    "question": "Fan-out on write vs fan-out on read for a social feed: how do you handle celebrities?",
+    "answer": "**Fan-out on write** pushes each new post ID into every follower's precomputed feed (e.g. a capped Redis sorted set): reads are cheap, but writes multiply by follower count. **Fan-out on read** builds the feed at request time by merging followed users' recent posts: cheap writes, expensive reads. A celebrity with 50M followers makes fan-out on write explode, so use a **hybrid**: fan out for normal accounts, skip fan-out for celebrities, and merge their recent posts at read time. Also skip inactive users and store only post IDs in feeds.",
+    "explanation": "Rough numbers: 10M posts/day × 200 average followers ≈ 2B feed inserts/day (~23k/s), while 100M users × 10 feed loads ≈ 1B reads/day (~12k/s). The hybrid keeps both costs bounded.",
+    "followUps": ["How do you handle deletes and unfollows with precomputed feeds?", "Where would ranking happen?"],
+    "tags": ["news-feed", "fan-out", "system-design", "scenario"]
+  }
+]

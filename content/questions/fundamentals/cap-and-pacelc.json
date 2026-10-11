@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "cap-and-pacelc-what-is-cap",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "CAP theorem",
+    "difficulty": "easy",
+    "question": "What is the CAP theorem?",
+    "answer": "CAP says that when a **network partition** splits a distributed system, it must choose between **Consistency** (every read sees the most recent write, i.e. linearizability) and **Availability** (every request to a non-failed node gets a non-error response). Partition tolerance isn't optional once data is on multiple machines, so the real choice is **CP or AP during a partition**. When the network is healthy, you can have both.",
+    "followUps": ["Why is 'pick 2 of 3' misleading?", "Give an example of a CP and an AP system."],
+    "tags": ["cap", "distributed"]
+  },
+  {
+    "slug": "cap-and-pacelc-what-is-a-partition",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "CAP theorem",
+    "difficulty": "easy",
+    "question": "What is a network partition?",
+    "answer": "A **network partition** is when nodes in a distributed system are still running but **can't communicate** with each other, because messages are lost or delayed. It's different from a crash: both sides are alive and may keep receiving client requests, so each must decide whether to answer (risking stale or conflicting data) or refuse (losing availability). Causes include switch failures, misconfigured firewalls, cloud zone issues and long pauses that look like network loss.",
+    "followUps": ["How does MongoDB behave when a primary is partitioned from the majority?"],
+    "tags": ["partition", "distributed"]
+  },
+  {
+    "slug": "cap-and-pacelc-why-not-ca",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "CAP theorem",
+    "difficulty": "medium",
+    "question": "Why can't a distributed database just be 'CA'?",
+    "answer": "Because partitions are not something you choose to have; in any multi-node system the network **will** eventually drop or delay messages. Giving up P would mean assuming the network never fails, which isn't realistic. So the trade-off only shows up during a partition, and it's C versus A. A system that is truly 'CA' is effectively a **single node**, which has no partition between replicas but also no fault tolerance.",
+    "followUps": ["Is a single PostgreSQL server CP or AP?", "What does CAP's availability really mean?"],
+    "tags": ["cap", "partition-tolerance"]
+  },
+  {
+    "slug": "cap-and-pacelc-pacelc",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "PACELC",
+    "difficulty": "medium",
+    "question": "What is PACELC and why is it more useful than CAP?",
+    "answer": "**PACELC** says: if there's a **P**artition, choose **A**vailability or **C**onsistency; **E**lse, in normal operation, choose **L**atency or **C**onsistency. It's more useful because partitions are rare, but the latency cost of waiting for replicas is paid on **every** request. For example, acknowledging a MongoDB write with `w: 1` is faster but can be lost on failover, while `w: 'majority'` adds a round trip but survives it.",
+    "followUps": ["How would you classify a system that uses async replication?", "Who proposed PACELC?"],
+    "tags": ["pacelc", "latency", "consistency"]
+  },
+  {
+    "slug": "cap-and-pacelc-consistency-models",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "Consistency models",
+    "difficulty": "medium",
+    "question": "Explain the common consistency models from strongest to weakest.",
+    "answer": "**Linearizable**: every read sees the latest write in real-time order, as if there were one copy. **Sequential**: everyone sees the same order of operations, respecting each client's order, but not real time. **Causal**: causally related writes are seen in order (a reply never before its review). **Read-your-writes** and **monotonic reads**: a single user sees their own writes and never sees data go backwards. **Eventual**: replicas converge once writes stop, with no ordering promise.",
+    "explanation": "E-commerce mapping: last-item stock wants linearizable; a user's updated address wants read-your-writes; order status shouldn't flip from 'shipped' back to 'packed' (monotonic reads); review counts can be eventual.",
+    "followUps": ["Which guarantee fixes 'I saved it and it disappeared'?", "How do you get read-your-writes with read replicas?"],
+    "tags": ["consistency-models", "linearizability", "eventual-consistency"]
+  },
+  {
+    "slug": "cap-and-pacelc-mongodb-cp-or-ap",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "MongoDB",
+    "difficulty": "hard",
+    "question": "Is MongoDB CP or AP?",
+    "answer": "It's tunable, so a one-word label is an oversimplification. A replica set has a **single primary** elected by a majority; a primary that loses the majority steps down, so the minority side **rejects writes**, which is CP behaviour. But reads with `secondary` or `nearest` read preference can still be served there, possibly stale, and writes with `w: 1` can be **rolled back** after failover. With `w: 'majority'`, read concern `majority` or `linearizable`, and primary reads, it behaves strongly consistent; with secondary reads and `w: 1` it trades consistency for latency and availability.",
+    "explanation": "Three knobs: **write concern** (how many nodes acknowledge), **read concern** (`local`, `majority`, `linearizable`, `snapshot`) and **read preference** (which node serves reads). Causally consistent sessions give read-your-writes and monotonic reads when combined with `majority` read and write concerns.",
+    "followUps": ["What is a rollback in MongoDB?", "When would you read from secondaries?"],
+    "tags": ["mongodb", "cap", "write-concern", "read-concern"]
+  },
+  {
+    "slug": "cap-and-pacelc-postgres-replication",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "PostgreSQL",
+    "difficulty": "hard",
+    "question": "How does PostgreSQL replication affect consistency and availability?",
+    "answer": "A **single PostgreSQL node** has no replicas to disagree, so it's simply consistent until it's down. With **asynchronous streaming replication** (the default), commits return before standbys receive them, so standby reads can be **stale** and a failover can **lose** the last commits: low latency, weaker consistency. With **synchronous replication** (`synchronous_standby_names`), commits wait for a standby, so no acknowledged commit is lost, but if no synchronous standby responds, **commits block**: consistency over availability. `synchronous_commit = remote_apply` additionally makes the commit visible on the standby before returning.",
+    "followUps": ["Who handles failover in PostgreSQL?", "How would you avoid stale reads from a replica after a user updates their profile?"],
+    "tags": ["postgresql", "replication", "consistency"]
+  },
+  {
+    "slug": "cap-and-pacelc-stale-read-scenario",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "Consistency models",
+    "difficulty": "hard",
+    "question": "Users report that right after placing an order, the 'My orders' page sometimes doesn't show it. You read from replicas to reduce load on the primary. How do you fix it?",
+    "answer": "It's a **read-your-writes** violation caused by **replication lag**: the order was written to the primary, but the next read hit a replica that hadn't received it yet. Options: route reads of **a user's own recent data** to the primary (for example for a few seconds after a write, or always for 'My orders'); in MongoDB, use a **causally consistent session** with `majority` read and write concerns so a secondary read waits until it has caught up; in PostgreSQL, compare WAL positions or use `remote_apply` for the replicas you read from. Keep replica reads for data where staleness is harmless, like the product catalogue.",
+    "explanation": "The key insight for interviewers: you don't need linearizability everywhere. The user only needs to see **their own** writes, which is a cheaper session guarantee. Also mention monitoring replication lag and alerting when it grows.",
+    "followUps": ["What is replication lag and what causes it?", "Would a cache in front of the database make this worse?"],
+    "tags": ["read-your-writes", "replication-lag", "scenario"]
+  },
+  {
+    "slug": "cap-and-pacelc-checkout-vs-likes",
+    "lessonSlug": "cap-and-pacelc",
+    "topic": "Trade-offs",
+    "difficulty": "medium",
+    "question": "In an e-commerce system, which features need strong consistency and which can be eventually consistent?",
+    "answer": "**Strong consistency**: payments, stock decrements, coupon redemptions and unique usernames, because a stale read causes double-charging, overselling or duplicates. **Eventually consistent**: review counts, view counts, 'recently viewed', recommendations and catalogue browsing, where being a few seconds behind is harmless and speed and availability matter more. The point is to choose **per feature**, not per database.",
+    "followUps": ["How would you implement a high-volume view counter?", "Where does the shopping cart fit?"],
+    "tags": ["trade-offs", "ecommerce", "eventual-consistency"]
+  }
+]

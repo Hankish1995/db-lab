@@ -1,0 +1,105 @@
+[
+  {
+    "slug": "mongodb-indexes-why-and-cost",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "easy",
+    "question": "What does an index do in MongoDB, and what does it cost?",
+    "answer": "An index is a **sorted B-tree of field values with pointers to documents**, so MongoDB can jump to matching documents (an `IXSCAN`) instead of scanning the whole collection (`COLLSCAN`), and can return results already sorted. The cost: every insert, delete and update of an indexed field must also update the index, so **writes get slower**; indexes also use **disk and RAM**, and hot indexes should fit in memory.",
+    "followUps": ["Which index exists on every collection by default?", "How many indexes can a collection have?"],
+    "tags": ["mongodb", "indexes"]
+  },
+  {
+    "slug": "mongodb-indexes-esr-rule",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "What is the ESR rule? Design the index for find({ status: \"paid\", total: { $gte: 100 } }).sort({ createdAt: -1 }).",
+    "answer": "Order compound index fields as **Equality, then Sort, then Range**. Here: `{ status: 1, createdAt: 1, total: 1 }` (createdAt can be 1 or -1, the index can be walked backward). Equality narrows to one slice that is already sorted by date, and the range on total is filtered inside it. The E-R-S order `{ status: 1, total: 1, createdAt: 1 }` forces an **in-memory SORT**, because inside \"paid\" the entries are ordered by total, not date.",
+    "explanation": "Measured on a 50,000-order test collection with `.limit(20)`:\n- E-R-S: `IXSCAN → SORT → FETCH`, **8,000** keys examined.\n- E-S-R: `IXSCAN → FETCH → LIMIT`, **23** keys examined, no sort stage.",
+    "followUps": ["When might E-R-S be the better choice?", "Does the direction of createdAt in the index matter here?"],
+    "tags": ["mongodb", "indexes", "esr", "compound-index"]
+  },
+  {
+    "slug": "mongodb-indexes-prefix-rule",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "easy",
+    "question": "You have an index on { status: 1, createdAt: 1 }. Which queries can use it efficiently?",
+    "answer": "Queries on its **prefixes**: `{ status }` and `{ status, createdAt }`, including `status` equality with a sort or range on `createdAt`. A query on **only `createdAt`** can't seek into it efficiently, because dates are spread across every status value. That also means a separate `{ status: 1 }` index is **redundant** and can be dropped.",
+    "followUps": ["Can this index support sort({ status: 1, createdAt: -1 })?"],
+    "tags": ["mongodb", "indexes", "compound-index"]
+  },
+  {
+    "slug": "mongodb-indexes-explain-output",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "How do you read explain(\"executionStats\") to judge whether a query is well indexed?",
+    "answer": "In `winningPlan`, look for **IXSCAN** (not COLLSCAN) and **no SORT stage** (an in-memory sort is a red flag). Then compare `totalKeysExamined`, `totalDocsExamined` and `nReturned`: ideally they're about **1:1:1**. Docs examined far above nReturned means the index doesn't cover the filter; keys far above means a poorly ordered index; `totalDocsExamined: 0` with `PROJECTION_COVERED` means a covered query.",
+    "followUps": ["What does it mean if keys examined is 0 and docs examined equals the collection size?", "What is the memory limit for an in-memory sort?"],
+    "tags": ["mongodb", "indexes", "explain"]
+  },
+  {
+    "slug": "mongodb-indexes-covered-query",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "What is a covered query, and why does a query often fail to be covered?",
+    "answer": "A **covered query** is answered **entirely from the index**: every filtered and projected field is in the index, so no documents are fetched (`totalDocsExamined: 0`, stage `PROJECTION_COVERED`). The usual reason it fails is **`_id`**: it's returned by default, so unless you project `_id: 0` (or `_id` is in the index), MongoDB must FETCH each document. Array (multikey) fields generally can't be covered either.",
+    "explanation": "```js\ndb.orders.createIndex({ status: 1, createdAt: 1 })\ndb.orders.find({ status: \"paid\" }, { _id: 0, status: 1, createdAt: 1 }) // covered\ndb.orders.find({ status: \"paid\" }, { status: 1, createdAt: 1 })         // FETCH for _id\n```",
+    "followUps": ["Would adding more fields to the index to cover a query always be a good idea?"],
+    "tags": ["mongodb", "indexes", "covered-query"]
+  },
+  {
+    "slug": "mongodb-indexes-unique-partial-sparse",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "Users may sign up without an email, but emails must be unique when present. Why does a plain unique index fail, and what do you use?",
+    "answer": "A plain unique index stores a **missing field as null**, so the **second** user without an email triggers a duplicate-key error. Use a **unique partial index**: `createIndex({ email: 1 }, { unique: true, partialFilterExpression: { email: { $exists: true } } })`, which only indexes (and enforces uniqueness on) documents that have an email. Prefer **partial over sparse** indexes in general: partial accepts any filter expression, and sparse is the older, less flexible feature.",
+    "followUps": ["When will the query planner use a partial index?", "How would you make email uniqueness case-insensitive?"],
+    "tags": ["mongodb", "indexes", "unique", "partial-index"]
+  },
+  {
+    "slug": "mongodb-indexes-ttl-multikey",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "How do TTL indexes work, and what is the main limitation of multikey indexes?",
+    "answer": "A **TTL index** is a single-field index on a **Date** field with `expireAfterSeconds`; a background task removes expired documents roughly **every 60 seconds**, so expiry isn't instant (use `expireAfterSeconds: 0` on an `expiresAt` field for per-document expiry). A **multikey index** is created automatically when an indexed field holds an array, with one entry per element; in a **compound** index, at most **one** indexed field may be an array in a given document, otherwise inserts fail with \"cannot index parallel arrays\".",
+    "followUps": ["What happens to documents without the TTL field?", "Why does MongoDB forbid parallel arrays in one index?"],
+    "tags": ["mongodb", "indexes", "ttl", "multikey"]
+  },
+  {
+    "slug": "mongodb-indexes-unused-indexes",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "medium",
+    "question": "How would you find and safely remove unused indexes in production?",
+    "answer": "Run `$indexStats` (`db.orders.aggregate([{ $indexStats: {} }])`) and look at `accesses.ops`, which counts uses **since the server started or the index was created, on that member only**, so check every replica set member over a long enough period. Also look for **redundant prefixes**. Then **hide** the candidate with `hideIndex()`: the planner ignores it but it's still maintained, so if performance drops you `unhideIndex()` instantly instead of rebuilding; if all is well, drop it.",
+    "followUps": ["Does a hidden index still slow down writes?", "Why can't you hide the _id index?"],
+    "tags": ["mongodb", "indexes", "operations"]
+  },
+  {
+    "slug": "mongodb-indexes-slow-query-scenario",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "hard",
+    "question": "Scenario: the 'My orders' page (orders of a user, newest first, 20 per page) got slow as the orders collection grew to 50 million documents. Walk through how you'd diagnose and fix it.",
+    "answer": "First find the exact query in the **profiler** or slow query logs, then run it with **`explain(\"executionStats\")`**. I'd expect a `COLLSCAN`, or an `IXSCAN` on `userId` followed by an in-memory **`SORT`**, with `totalDocsExamined` far above `nReturned`. The fix is an ESR index, `{ userId: 1, createdAt: -1 }`: equality on the user, then the sort, so MongoDB reads exactly 20 entries in order and stops. Re-run explain to confirm IXSCAN, no SORT and roughly 20 keys / 20 docs / 20 returned, and replace deep `skip` paging with range-based paging on `createdAt` and `_id`.",
+    "explanation": "Also check:\n- The index is built on a live collection; modern builds only lock briefly at the start and end, but they still use I/O, so pick a quiet window.\n- Whether an existing `{ userId: 1 }` index becomes redundant and can be dropped.\n- Whether the projection returns huge fields the page doesn't need.\n```js\ndb.orders.createIndex({ userId: 1, createdAt: -1 })\ndb.orders.find({ userId: uid, createdAt: { $lt: lastSeen } })\n         .sort({ createdAt: -1 }).limit(20)\n```",
+    "followUps": ["How would you page through results without skip?", "What if the page also filters by status?"],
+    "tags": ["mongodb", "indexes", "explain", "scenario"]
+  },
+  {
+    "slug": "mongodb-indexes-index-builds",
+    "lessonSlug": "mongodb-indexes",
+    "topic": "MongoDB indexes",
+    "difficulty": "hard",
+    "question": "Is it safe to create an index on a large, busy production collection?",
+    "answer": "Mostly, with care. Modern MongoDB index builds hold an **exclusive lock only briefly at the start and end** of the build; in between, reads and writes continue. But the build **scans the whole collection**, consuming CPU, I/O and memory, and on a replica set it runs on the data-bearing members and commits once enough have finished. So schedule big builds in low-traffic windows, watch replication lag and cache pressure, and avoid building several large indexes at once.",
+    "followUps": ["What happens to writes that arrive during the build?", "How would you check the progress of an index build?"],
+    "tags": ["mongodb", "indexes", "operations"]
+  }
+]

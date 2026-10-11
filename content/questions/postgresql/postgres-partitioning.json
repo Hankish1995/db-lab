@@ -1,0 +1,163 @@
+[
+  {
+    "slug": "postgres-partitioning-what-is-it",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "easy",
+    "question": "What is table partitioning in PostgreSQL and why would you use it?",
+    "answer": "Partitioning splits one logical table into several smaller physical tables (**partitions**) **on the same server**, chosen by a **partition key** such as `created_at`. You still query the parent table and PostgreSQL routes rows automatically. The main benefits are **cheap data retention** (drop a whole month instead of a huge `DELETE`), smaller VACUUMs and indexes, and **partition pruning** for queries that filter on the key.",
+    "followUps": [
+      "How is partitioning different from sharding?",
+      "What is partition pruning?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-range-list-hash",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "easy",
+    "question": "What are the three declarative partitioning methods in PostgreSQL, and when do you use each?",
+    "answer": "**RANGE** splits by value ranges, usually time (`orders` by month), and makes retention easy. **LIST** splits by explicit values such as region or status. **HASH** spreads rows evenly across N partitions using `MODULUS`/`REMAINDER`, useful for an ID like `customer_id` when there's no natural range. Range prunes on ranges and equality, list on equality/`IN`, hash only on equality.",
+    "explanation": "```sql\nCREATE TABLE orders (...) PARTITION BY RANGE (created_at);\nCREATE TABLE orders_2026_02 PARTITION OF orders\n  FOR VALUES FROM ('2026-02-01') TO ('2026-03-01'); -- lower inclusive, upper exclusive\n\nCREATE TABLE carts (...) PARTITION BY HASH (customer_id);\nCREATE TABLE carts_p0 PARTITION OF carts FOR VALUES WITH (MODULUS 4, REMAINDER 0);\n```",
+    "followUps": [
+      "Why is hash partitioning bad for data retention?",
+      "What happens to a row that matches no partition?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "range",
+      "list",
+      "hash"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-vs-sharding",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "easy",
+    "question": "What is the difference between partitioning and sharding?",
+    "answer": "**Partitioning** splits a table into pieces on the **same server**: it improves maintenance and pruning but adds no CPU, RAM or disk. **Sharding** spreads data across **many servers**, so it scales storage and writes beyond one machine, at the cost of routing, cross-shard queries and operational complexity. In PostgreSQL, partitioning is built in; sharding needs something like Citus or application-level routing.",
+    "followUps": [
+      "And how is table inheritance different?",
+      "When would you move from partitioning to sharding?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "sharding"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-pruning",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "medium",
+    "question": "What is partition pruning, and does it work with parameterized queries?",
+    "answer": "**Partition pruning** means the planner skips partitions that can't contain matching rows, based on conditions on the **partition key**. With `WHERE created_at >= '2026-02-10' AND created_at < '2026-02-11'` only the February partition is scanned; with `WHERE customer_id = 42` every partition is scanned. Yes, it works with parameters: when the value is only known at run time (a generic plan for a prepared statement, or a value from a subquery), PostgreSQL prunes **at execution time**, shown as `Subplans Removed: N` in `EXPLAIN ANALYZE`.",
+    "explanation": "Pruning needs the bare key column. `WHERE date_trunc('month', created_at) = '2026-02-01'` can't prune, so rewrite it as a range on `created_at`.",
+    "followUps": [
+      "How do you verify pruning happened?",
+      "Why can a function on the key column break pruning?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "partition-pruning",
+      "explain"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-unique-constraints",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "medium",
+    "question": "Why must a primary key or unique constraint on a partitioned table include the partition key?",
+    "answer": "PostgreSQL has **no global indexes**: an index on a partitioned table is really one separate index per partition. Each index can only check uniqueness **inside its own partition**, so the database can only guarantee global uniqueness if the partition key is part of the constraint, which means two equal keys must land in the same partition. That's why an `orders` table partitioned by `created_at` uses `PRIMARY KEY (id, created_at)`.",
+    "explanation": "Trying `PRIMARY KEY (id)` fails with: `unique constraint on partitioned table must include all partitioning columns`. An identity column still generates unique values in practice, but the database no longer enforces `id` alone as unique.",
+    "followUps": [
+      "How do you create an index concurrently on a partitioned table?",
+      "How does MongoDB sharding have the same limitation?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "indexes",
+      "constraints"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-drop-vs-delete",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "medium",
+    "question": "How do you delete data older than 12 months from a huge partitioned orders table?",
+    "answer": "Don't `DELETE` rows: that writes WAL for every row, leaves millions of dead tuples and triggers heavy VACUUM work. Instead remove whole partitions: `DROP TABLE orders_2025_01;` or, to archive without blocking traffic, `ALTER TABLE orders DETACH PARTITION orders_2025_01 CONCURRENTLY;` then dump and drop it. Dropping a partition is a near-instant metadata operation.",
+    "explanation": "`DETACH ... CONCURRENTLY` takes a weaker lock in two transactions so queries keep running. It can't run inside a transaction block, isn't allowed when the table has a default partition, and if interrupted you complete it with `DETACH PARTITION ... FINALIZE`. Plain `DETACH` and `DROP` take an ACCESS EXCLUSIVE lock on the parent.",
+    "followUps": [
+      "What locks does a plain DETACH take?",
+      "How would you automate monthly partition creation and retention?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "retention",
+      "vacuum"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-default-partition",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "medium",
+    "question": "What is a default partition, and what are its downsides?",
+    "answer": "A **default partition** (`PARTITION OF orders DEFAULT`) catches rows that match no other partition; without one, such inserts fail with `no partition of relation found for row`. The downsides: creating a new partition must **scan the default** to make sure none of its rows belong to the new range (and fails if some do), and `DETACH PARTITION ... CONCURRENTLY` is not allowed while a default exists. Many teams instead pre-create partitions ahead of time and alert on insert failures.",
+    "followUps": [
+      "How does pg_partman help here?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-how-many",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "hard",
+    "question": "How many partitions is too many, and how do you choose the granularity?",
+    "answer": "Each partition is a real table with its own indexes and catalog entries, and planning cost grows with the number of partitions, especially for queries that can't prune. Dozens to a few hundred partitions are fine for most workloads; low thousands can work if nearly every query prunes; tens of thousands means slow planning, more memory per connection and lock pressure. Choose granularity from data volume and retention: **monthly** is the usual default, daily only for very high volume with short retention. Never one partition per customer.",
+    "explanation": "Measure it: `EXPLAIN (ANALYZE)` prints `Planning Time`. If planning time dominates execution time for common queries, you have too many partitions or queries that don't filter on the key.",
+    "followUps": [
+      "What would you do if most queries filter by customer_id, not date?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "performance"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-scenario-events-table",
+    "lessonSlug": "postgres-partitioning",
+    "topic": "Partitioning",
+    "difficulty": "hard",
+    "question": "Scenario: your 800 GB `order_events` table grows 3 GB a day, autovacuum never keeps up, and a nightly job deleting events older than 90 days runs for hours. What would you do?",
+    "answer": "This is the textbook case for **RANGE partitioning by `created_at`**: daily or weekly partitions (around 90–100 daily partitions is fine). New writes hit one small, hot partition; autovacuum works on small tables; and retention becomes dropping or detaching whole partitions, no `DELETE`, no dead tuples. I'd check that the main queries filter on `created_at` so they prune, make the primary key `(id, created_at)`, and automate partition creation and retention with **pg_partman** or a scheduled job.",
+    "explanation": "Migration path: create the new partitioned table, create partitions, switch writes to it, backfill historical data in batches (or attach old data as a partition with a matching `CHECK` constraint), then rename. If queries mostly filter by customer instead of time, partitioning by time won't help those queries; keep a `customer_id` index on each partition.",
+    "followUps": [
+      "How do you migrate an existing large table to a partitioned one with minimal downtime?",
+      "What if the business needs a unique event_id across all time?"
+    ],
+    "tags": [
+      "postgresql",
+      "partitioning",
+      "scenario",
+      "retention"
+    ]
+  }
+]

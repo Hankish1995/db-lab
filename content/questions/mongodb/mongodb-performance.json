@@ -1,0 +1,104 @@
+[
+  {
+    "slug": "mongodb-performance-slow-query-workflow",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "medium",
+    "question": "Scenario: a MongoDB query behind the \"My orders\" page has become slow. Walk me through how you'd investigate it.",
+    "answer": "First **reproduce** the exact query (from the slow query log, the profiler or Atlas Query Profiler). Then run `explain('executionStats')` and look at the **winning plan** (`COLLSCAN` or an in-memory `SORT` are red flags) and compare `totalKeysExamined` / `totalDocsExamined` to `nReturned`. A high ratio means a missing or wrong index, so I'd create a compound index following **Equality, Sort, Range**, e.g. `{ customerId: 1, status: 1, createdAt: -1 }`, then re-run `explain` to confirm an `IXSCAN` with a ratio near 1. I'd also check the endpoint uses a **projection**, sane pagination, and that the working set fits in RAM.",
+    "explanation": "Before: `SORT` over `COLLSCAN`, 2000 docs examined for 27 returned. After the index: `IXSCAN`, 27 keys and 27 docs examined for 27 returned, and no in-memory sort.",
+    "followUps": ["What does the ESR rule mean?", "What is a covered query?"],
+    "tags": ["mongodb", "performance", "explain", "scenario"]
+  },
+  {
+    "slug": "mongodb-performance-explain-fields",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "easy",
+    "question": "Which fields in explain('executionStats') do you look at first?",
+    "answer": "The **winning plan stage** (`IXSCAN` good, `COLLSCAN` bad, a `SORT` stage means an in-memory sort), **`nReturned`**, **`totalKeysExamined`**, **`totalDocsExamined`** and **`executionTimeMillis`**. The key health check is **examined ÷ returned**: close to 1 means the index fits the query; hundreds or thousands means MongoDB is reading far more than it returns.",
+    "followUps": ["What's the difference between queryPlanner and executionStats verbosity?", "What does totalDocsExamined: 0 mean?"],
+    "tags": ["mongodb", "performance", "explain"]
+  },
+  {
+    "slug": "mongodb-performance-profiler",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "easy",
+    "question": "How do you find slow queries in MongoDB?",
+    "answer": "Operations slower than **`slowms`** (default 100 ms) are written to the **`mongod` log** even with the profiler off. The **database profiler** (`db.setProfilingLevel(1, { slowms: 100 })`) also stores them in `system.profile`, where you can query for things like `planSummary: 'COLLSCAN'`. Level 2 records everything and is too heavy for production. On Atlas, the Query Profiler and Performance Advisor show the same data and suggest indexes.",
+    "followUps": ["What is the overhead of the profiler?", "What is sampleRate?"],
+    "tags": ["mongodb", "performance", "profiler"]
+  },
+  {
+    "slug": "mongodb-performance-working-set",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "medium",
+    "question": "What is the working set, and why should it fit in memory?",
+    "answer": "The **working set** is the data and indexes your application accesses regularly. WiredTiger keeps hot data in its **cache**, which by default is the larger of **50% of (RAM − 1 GB)** or **256 MB**. If the working set fits, most reads are served from memory; if not, pages are constantly evicted and re-read from disk and latency jumps. Collection scans make it worse because they push useful data out of the cache.",
+    "followUps": ["How would you detect that the working set doesn't fit?", "Why shouldn't you set the cache to 90% of RAM?"],
+    "tags": ["mongodb", "performance", "memory", "wiredtiger"]
+  },
+  {
+    "slug": "mongodb-performance-keyset-pagination",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "medium",
+    "question": "Why is skip/limit pagination slow for deep pages, and what's the alternative?",
+    "answer": "`skip(n)` doesn't jump: the server still **walks past all n entries**, so page 1,000 costs far more than page 1. **Keyset (range-based) pagination** remembers the last item's sort values and queries for items after it using an index, e.g. `createdAt < last.createdAt` with `_id` as a tie-breaker, so every page costs the same. The trade-off is no \"jump to page 37\", only next/previous.",
+    "explanation": "```js\ndb.orders.find({ $or: [\n  { createdAt: { $lt: last.createdAt } },\n  { createdAt: last.createdAt, _id: { $lt: last._id } }\n] }).sort({ createdAt: -1, _id: -1 }).limit(20)\n```\nWith index `{ createdAt: -1, _id: -1 }`.",
+    "followUps": ["Why is the _id tie-breaker needed?", "How would you implement a \"previous page\" button?"],
+    "tags": ["mongodb", "performance", "pagination"]
+  },
+  {
+    "slug": "mongodb-performance-regex",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "medium",
+    "question": "Which $regex queries can use an index efficiently?",
+    "answer": "Only **case-sensitive, anchored prefix** regexes like `/^Key/`, which become a tight index range. Unanchored (`/board/`) or case-insensitive (`/^key/i`) patterns must check every index key or document. For case-insensitive lookups, use a **collation index** with `strength: 2` or store a lowercased field; for real search, use a text index or Atlas Search.",
+    "followUps": ["How does a collation index work?", "Text index vs Atlas Search?"],
+    "tags": ["mongodb", "performance", "regex", "indexes"]
+  },
+  {
+    "slug": "mongodb-performance-bulk-writes",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "medium",
+    "question": "How do you speed up a job that imports 1 million products into MongoDB?",
+    "answer": "Batch the writes with **`insertMany` or `bulkWrite`** instead of one round trip per document, in batches of a few hundred to a few thousand. Use **`ordered: false`** so one bad document (like a duplicate key) doesn't stop the batch and operations can run in parallel. Consider creating secondary indexes after a large initial load, and choose the write concern consciously: `w: 'majority'` is safer, `w: 1` is faster but can lose writes on failover.",
+    "followUps": ["How do you handle the errors from an unordered bulkWrite?", "Why do indexes slow down writes?"],
+    "tags": ["mongodb", "performance", "writes"]
+  },
+  {
+    "slug": "mongodb-performance-connections",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "easy",
+    "question": "How should a Node.js app manage MongoDB connections?",
+    "answer": "Create **one `MongoClient` per process** at startup and reuse it: it manages a **connection pool** (driver default `maxPoolSize` 100). Creating a client per request pays connection and auth costs every time and leaks connections. Size the pool for the whole fleet, because 30 pods × 100 connections is 3,000 server connections, each using server memory.",
+    "followUps": ["How does this change in serverless functions?", "What happens when the pool is exhausted?"],
+    "tags": ["mongodb", "performance", "connections", "nodejs"]
+  },
+  {
+    "slug": "mongodb-performance-data-growth",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "hard",
+    "question": "Your product documents keep growing because every review is pushed into a reviews array, and product pages are getting slower. What do you do, and how do you stop collections growing forever?",
+    "answer": "This is the **unbounded array** anti-pattern: every product read loads all reviews into the cache and network, and documents creep toward the **16 MB** limit. Move reviews to their own `reviews` collection indexed by `{ productId: 1, createdAt: -1 }`, and keep only a **subset** (the latest few reviews) plus summary fields like `reviewCount` and `avgRating` on the product. For data that should expire, like abandoned carts or sessions, use a **TTL index**; for data you must keep but rarely read, like old orders, **archive** it to another collection or cheaper storage and delete it from the hot collection in batches.",
+    "followUps": ["How precise is TTL deletion?", "How would you keep avgRating correct?"],
+    "tags": ["mongodb", "performance", "schema-design", "scenario"]
+  },
+  {
+    "slug": "mongodb-performance-monitoring",
+    "lessonSlug": "mongodb-performance",
+    "topic": "MongoDB performance",
+    "difficulty": "hard",
+    "question": "Which metrics would you monitor and alert on for a production MongoDB cluster?",
+    "answer": "**Opcounters** (load), **query targeting** or scanned-to-returned ratio (missing indexes), **WiredTiger cache** usage and pages read into cache (working set vs RAM), **replication lag** (stale reads and failover risk), **connections** (pool sizing and leaks), **slow queries** from the log or profiler, and disk IOPS/latency. Each one maps to a fix: indexes, more RAM or less data, fixing lagging secondaries, or adjusting the connection pool.",
+    "followUps": ["What would cause a sudden spike in query targeting?", "What would you check if replication lag keeps growing?"],
+    "tags": ["mongodb", "performance", "monitoring", "production"]
+  }
+]

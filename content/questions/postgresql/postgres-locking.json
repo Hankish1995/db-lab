@@ -1,0 +1,156 @@
+[
+  {
+    "slug": "postgres-locking-why-locks-with-mvcc",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "easy",
+    "question": "PostgreSQL uses MVCC. Why does it still need locks?",
+    "answer": "MVCC only removes conflicts between **readers and writers**: readers use a snapshot and never wait. Locks are still needed when **two writers touch the same row** (the second waits for the first), when **schema changes** must exclude everything else (`ALTER TABLE` takes `ACCESS EXCLUSIVE`), and for application-level mutual exclusion via **advisory locks**.",
+    "followUps": [
+      "Which lock does a plain SELECT take?",
+      "Can a SELECT ever be blocked?"
+    ],
+    "tags": [
+      "postgresql",
+      "locking",
+      "mvcc"
+    ]
+  },
+  {
+    "slug": "postgres-locking-timeouts",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "easy",
+    "question": "What is the difference between statement_timeout, lock_timeout and idle_in_transaction_session_timeout?",
+    "answer": "**`statement_timeout`** cancels any statement that runs longer than the limit, whether it's waiting or working. **`lock_timeout`** cancels a statement only if it **waits for a lock** longer than the limit, ideal for migrations. **`idle_in_transaction_session_timeout`** terminates sessions that opened a transaction and then sit idle, which would otherwise hold locks and block vacuum. Set them per role, e.g. `ALTER ROLE shop_web SET statement_timeout = '10s'`.",
+    "followUps": [
+      "Why not set a huge statement_timeout globally?",
+      "What does transaction_timeout add in PostgreSQL 17?"
+    ],
+    "tags": [
+      "postgresql",
+      "timeouts",
+      "locking"
+    ]
+  },
+  {
+    "slug": "postgres-locking-row-lock-modes",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "What are the four row-level lock modes in PostgreSQL, and which one does a plain UPDATE take?",
+    "answer": "From strongest to weakest: **FOR UPDATE**, **FOR NO KEY UPDATE**, **FOR SHARE** and **FOR KEY SHARE**. A plain `UPDATE` takes **FOR NO KEY UPDATE** unless it actually changes a key column (one with a unique index usable by a foreign key), in which case it takes FOR UPDATE; `DELETE` takes FOR UPDATE. Foreign key checks take **FOR KEY SHARE** on the parent row, which conflicts only with FOR UPDATE, so updating a customer's non-key columns doesn't block inserting orders for that customer.",
+    "explanation": "Verified: while a session held `UPDATE customers SET country = 'IN' WHERE id = 5` uncommitted, an `INSERT INTO orders (customer_id ...) VALUES (5 ...)` completed instantly; with `SELECT ... FOR UPDATE` or an email change (unique column) it waited.",
+    "followUps": [
+      "When would you use FOR SHARE?",
+      "Why might changing a user's email block order inserts?"
+    ],
+    "tags": [
+      "postgresql",
+      "row-locks",
+      "foreign-keys"
+    ]
+  },
+  {
+    "slug": "postgres-locking-skip-locked-queue",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "How would you build a job queue in PostgreSQL that multiple workers can consume concurrently?",
+    "answer": "Use **`FOR UPDATE SKIP LOCKED`**: each worker selects the oldest queued job, locks it, and skips any row another worker already locked, so workers never wait for or double-process each other's jobs. Wrap it in an `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING ...` to claim atomically, with a partial index on queued jobs. Then either hold the transaction while processing (a crash releases the lock) or commit the claim and use a timeout to requeue jobs from dead workers.",
+    "explanation": "```sql\nUPDATE jobs SET status = 'running', attempts = attempts + 1\nWHERE id = (\n  SELECT id FROM jobs\n  WHERE status = 'queued' AND run_at <= now()\n  ORDER BY run_at, id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nRETURNING id, kind, payload;\n```",
+    "followUps": [
+      "What does NOWAIT do instead?",
+      "When would you switch to a real message broker?"
+    ],
+    "tags": [
+      "postgresql",
+      "skip-locked",
+      "job-queue"
+    ]
+  },
+  {
+    "slug": "postgres-locking-table-lock-modes",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "Which table-level locks do SELECT, UPDATE, CREATE INDEX and ALTER TABLE take, and what do they block?",
+    "answer": "`SELECT` takes **ACCESS SHARE**, which conflicts only with ACCESS EXCLUSIVE. `INSERT/UPDATE/DELETE` take **ROW EXCLUSIVE**, compatible with each other at table level. A normal `CREATE INDEX` takes **SHARE**: reads continue but **writes are blocked** for the whole build. Most `ALTER TABLE` forms, `DROP`, `TRUNCATE` and `VACUUM FULL` take **ACCESS EXCLUSIVE**, which blocks everything including plain SELECTs. `CREATE INDEX CONCURRENTLY` and `VACUUM` use SHARE UPDATE EXCLUSIVE, which doesn't block reads or writes.",
+    "followUps": [
+      "Why can't CREATE INDEX CONCURRENTLY run in a transaction?",
+      "How do you see table locks?"
+    ],
+    "tags": [
+      "postgresql",
+      "table-locks"
+    ]
+  },
+  {
+    "slug": "postgres-locking-deadlocks",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "How does PostgreSQL detect and resolve deadlocks, and how do you avoid them?",
+    "answer": "When a lock wait exceeds **`deadlock_timeout`** (1 s by default), the waiting session checks the wait-for graph; if there's a cycle, it aborts one transaction with `ERROR: deadlock detected` (SQLSTATE **40P01**) and the others proceed. Avoid them by **locking rows in a consistent order** (e.g. `SELECT ... WHERE id = ANY($1) ORDER BY id FOR UPDATE` for a cart), keeping transactions short, and retrying the victim.",
+    "followUps": [
+      "Why does the DETAIL line say 'waits for ShareLock on transaction'?",
+      "Should you lower deadlock_timeout?"
+    ],
+    "tags": [
+      "postgresql",
+      "deadlocks"
+    ]
+  },
+  {
+    "slug": "postgres-locking-advisory-locks",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "medium",
+    "question": "What are advisory locks and when would you use them?",
+    "answer": "Advisory locks are **named locks with application-defined meaning**: PostgreSQL doesn't tie them to any row or table, it just guarantees mutual exclusion on a bigint key. A typical use is making sure only **one replica runs a cron job**: `SELECT pg_try_advisory_xact_lock(hashtext('nightly-invoice-job'))` returns true for exactly one session. Prefer **transaction-level** locks, which release automatically at commit or rollback; session-level ones can leak and break behind a transaction-mode pooler like PgBouncer.",
+    "followUps": [
+      "What's the difference between pg_advisory_lock and pg_try_advisory_lock?",
+      "How do you see advisory locks in pg_locks?"
+    ],
+    "tags": [
+      "postgresql",
+      "advisory-locks"
+    ]
+  },
+  {
+    "slug": "postgres-locking-alter-table-outage",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "hard",
+    "question": "Scenario: you deploy a migration that adds a nullable column to products, which should take milliseconds, and the whole site goes down. What happened and how do you prevent it?",
+    "answer": "`ALTER TABLE` needs **ACCESS EXCLUSIVE**, and it was **waiting behind a long-running query or open transaction** holding ACCESS SHARE on products. While it waits in the lock queue, every new query on products, even a simple SELECT, **queues behind the ALTER**, so connections pile up and the app stalls. Prevent it by running DDL with **`SET lock_timeout = '2s'`** plus automatic retries, checking `pg_stat_activity` for long transactions before deploying, and setting `statement_timeout` and `idle_in_transaction_session_timeout` for app roles.",
+    "explanation": "Lesson reproduction from `pg_locks` + `pg_blocking_pids()`: report (AccessShareLock, granted) ← migration (AccessExclusiveLock, waiting, blocked by report) ← checkout SELECT (AccessShareLock, waiting, blocked by the migration).",
+    "followUps": [
+      "How do you find the blocking session?",
+      "Which migrations are safe to run online?"
+    ],
+    "tags": [
+      "postgresql",
+      "migrations",
+      "lock-timeout",
+      "scenario"
+    ]
+  },
+  {
+    "slug": "postgres-locking-safe-migrations",
+    "lessonSlug": "postgres-locking",
+    "topic": "Locking",
+    "difficulty": "hard",
+    "question": "How do you add an index, a NOT NULL constraint and a foreign key to a large, busy table without downtime?",
+    "answer": "**Index**: `CREATE INDEX CONCURRENTLY` outside a transaction; if it fails, drop the INVALID index and retry. **NOT NULL**: add `CHECK (col IS NOT NULL) NOT VALID`, then `VALIDATE CONSTRAINT` (scans under a lock that allows reads and writes), then `SET NOT NULL`, which uses the validated check to skip the scan, then drop the check. **Foreign key**: add it `NOT VALID` (enforced for new rows at once), then `VALIDATE CONSTRAINT` later. Also: constant column defaults are metadata-only since PostgreSQL 11, but volatile defaults or type changes rewrite the table. Run all of it with `lock_timeout`.",
+    "followUps": [
+      "Why is ADD COLUMN ... DEFAULT gen_random_uuid() slow?",
+      "How would you backfill a new column safely?"
+    ],
+    "tags": [
+      "postgresql",
+      "migrations",
+      "zero-downtime"
+    ]
+  }
+]

@@ -1,0 +1,160 @@
+[
+  {
+    "slug": "postgres-mvcc-and-vacuum-what-is-mvcc",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "MVCC",
+    "difficulty": "easy",
+    "question": "What is MVCC and how does PostgreSQL implement it?",
+    "answer": "**Multi-version concurrency control** keeps several versions of a row so each transaction can read a consistent **snapshot**. In PostgreSQL every row version (tuple) stores `xmin`, the transaction that created it, and `xmax`, the one that deleted or replaced it; an UPDATE writes a **new tuple** and sets `xmax` on the old one. The snapshot decides which version you see, so **readers don't block writers and writers don't block readers**.",
+    "followUps": [
+      "What happens to the old version?",
+      "Do two writers on the same row still block each other?"
+    ],
+    "tags": [
+      "postgresql",
+      "mvcc"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-update-internals",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "MVCC",
+    "difficulty": "easy",
+    "question": "What physically happens in PostgreSQL when you UPDATE one column of a row?",
+    "answer": "PostgreSQL writes a **complete new version** of the row (new `ctid`, `xmin` = your transaction ID) and marks the old version's `xmax` with your transaction ID. The old version stays on disk as a **dead tuple** once no snapshot needs it, until VACUUM cleans it. Unless the update qualifies as **HOT**, every index also gets a new entry pointing to the new version.",
+    "explanation": "Real output: before the update `xmin 1877, ctid (0,1), stock 10`; after `UPDATE inv SET stock = stock - 1` the visible row is `xmin 1879, ctid (0,4), stock 9`, and `pg_stat_user_tables` counts one dead tuple.",
+    "followUps": [
+      "What is a HOT update?",
+      "Why can heavy updates make a table grow?"
+    ],
+    "tags": [
+      "postgresql",
+      "mvcc",
+      "update"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-vacuum-vs-full",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "VACUUM",
+    "difficulty": "medium",
+    "question": "What is the difference between VACUUM, VACUUM FULL and autovacuum?",
+    "answer": "**VACUUM** removes dead tuples and marks their space reusable, updates the free space and visibility maps and freezes old rows; it runs alongside reads and writes and usually **doesn't shrink** the file. **VACUUM FULL** rewrites the table and its indexes into new compact files, returning space to the OS, but holds an **ACCESS EXCLUSIVE** lock (even SELECTs wait) and needs extra disk. **Autovacuum** is the background daemon that runs VACUUM and ANALYZE per table when dead/changed rows pass thresholds.",
+    "explanation": "Lesson demo: a 13 MB table grew to 40 MB after two full updates; VACUUM left it at 40 MB (space reusable, 0 dead tuples), VACUUM FULL brought it back to 13 MB.",
+    "followUps": [
+      "How would you shrink a bloated table without downtime?",
+      "What are the autovacuum thresholds?"
+    ],
+    "tags": [
+      "postgresql",
+      "vacuum",
+      "autovacuum"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-autovacuum-tuning",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "VACUUM",
+    "difficulty": "medium",
+    "question": "When does autovacuum run on a table, and why might it not be enough for a very large table?",
+    "answer": "By default it vacuums when dead tuples exceed `autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × rows`, i.e. **50 + 20%** of the table, and analyzes after **50 + 10%** of rows change. On a 100-million-row table that means waiting for 20 million dead tuples, so each run is huge and bloat builds up. Fix it per table with `ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01)` and give autovacuum more I/O budget, rather than disabling it.",
+    "followUps": [
+      "Why is disabling autovacuum dangerous?",
+      "What does autovacuum_vacuum_cost_limit control?"
+    ],
+    "tags": [
+      "postgresql",
+      "autovacuum",
+      "tuning"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-hot-updates",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "MVCC",
+    "difficulty": "medium",
+    "question": "What is a HOT update and how does fillfactor help?",
+    "answer": "A **heap-only tuple** update writes the new version **on the same page** and **doesn't touch any index**, because the index entry still leads to the old tuple, which chains to the new one. It requires that **no indexed column changes** and that the page has **free space**. `fillfactor` (e.g. 80) leaves room on each page at insert time, so more updates qualify; avoiding indexes on frequently changing columns helps too. Check the ratio `n_tup_hot_upd / n_tup_upd` in `pg_stat_user_tables`.",
+    "followUps": [
+      "Why are non-HOT updates expensive with many indexes?",
+      "What is page pruning?"
+    ],
+    "tags": [
+      "postgresql",
+      "hot-updates",
+      "fillfactor"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-long-transactions",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "VACUUM",
+    "difficulty": "medium",
+    "question": "VACUUM runs but reports 'dead but not yet removable' tuples. What's going on?",
+    "answer": "Some snapshot that is **still open** might need those old versions, so VACUUM must keep them. The usual causes are a long-running query or transaction, a session **idle in transaction**, an abandoned **replication slot**, `hot_standby_feedback` from a replica with long queries, or a forgotten prepared transaction. One old snapshot holds back cleanup for **every table** in the database. Find it via `backend_xmin` and `xact_start` in `pg_stat_activity`, and protect with `idle_in_transaction_session_timeout`.",
+    "followUps": [
+      "How do you find the oldest open transaction?",
+      "How do replication slots affect vacuum?"
+    ],
+    "tags": [
+      "postgresql",
+      "vacuum",
+      "long-transactions"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-wraparound",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "VACUUM",
+    "difficulty": "hard",
+    "question": "What is transaction ID wraparound in PostgreSQL and how is it prevented?",
+    "answer": "Transaction IDs are **32-bit** and compared circularly, so about 2 billion IDs are 'past' and 2 billion 'future'. Without action, very old rows would eventually look like they were created in the future and become invisible. VACUUM prevents this by **freezing** old tuples (marking them visible to everyone regardless of xmin). When a table's `age(relfrozenxid)` exceeds `autovacuum_freeze_max_age` (200 million by default), an **anti-wraparound autovacuum** runs even if autovacuum is disabled; if freezing still can't keep up, PostgreSQL warns and finally **stops assigning new XIDs** (no writes) until a vacuum completes.",
+    "followUps": [
+      "How do you monitor it?",
+      "What can block freezing?"
+    ],
+    "tags": [
+      "postgresql",
+      "wraparound",
+      "freezing",
+      "vacuum"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-bloat-scenario",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "VACUUM",
+    "difficulty": "hard",
+    "question": "Scenario: the carts table is 30 GB although it holds only 200 MB of live rows, and queries are getting slower. How do you investigate and fix it?",
+    "answer": "It's **bloat** from frequent updates and deletes outpacing vacuum. Check `pg_stat_user_tables` (`n_dead_tup`, `last_autovacuum`), look for **long or idle-in-transaction sessions** and stuck replication slots that block cleanup, and check whether autovacuum thresholds are too high. Fix the cause first: kill or time out the blockers, lower the table's `autovacuum_vacuum_scale_factor`, consider `fillfactor` and fewer indexes on hot columns for HOT updates. Then reclaim space with **`pg_repack`** (online) or `VACUUM FULL` in a maintenance window, since plain VACUUM won't shrink the file.",
+    "explanation": "Also consider the design: short-lived cart rows could be expired by dropping time-based partitions instead of mass DELETEs, which leaves no dead tuples.",
+    "followUps": [
+      "Why does VACUUM FULL need a maintenance window?",
+      "How does bloat hurt index scans?"
+    ],
+    "tags": [
+      "postgresql",
+      "bloat",
+      "vacuum",
+      "scenario"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-vs-undo-log",
+    "lessonSlug": "postgres-mvcc-and-vacuum",
+    "topic": "MVCC",
+    "difficulty": "hard",
+    "question": "How does PostgreSQL's MVCC differ from MySQL InnoDB's undo-log approach?",
+    "answer": "PostgreSQL keeps old versions **in the table itself**: an update appends a new tuple, rollback is free, but dead tuples must be removed by **VACUUM** and can cause table and index bloat. InnoDB updates the row **in place** and stores the previous version in a separate **undo log**; readers that need old versions reconstruct them from undo, purge threads clean it, and rollback must apply the undo. Long transactions bloat PostgreSQL tables, while in InnoDB they grow the undo history and slow reads.",
+    "followUps": [
+      "What does MongoDB's WiredTiger do?",
+      "Which approach is better for update-heavy workloads?"
+    ],
+    "tags": [
+      "postgresql",
+      "mvcc",
+      "mysql",
+      "comparison"
+    ]
+  }
+]

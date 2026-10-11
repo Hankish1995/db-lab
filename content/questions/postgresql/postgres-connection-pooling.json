@@ -1,0 +1,106 @@
+[
+  {
+    "slug": "postgres-connection-pooling-why-pool",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "easy",
+    "question": "Why do we need connection pooling with PostgreSQL?",
+    "answer": "PostgreSQL runs a **separate backend process per connection**: opening one means forking a process, authenticating and warming caches, and each one costs memory. Opening a connection per request wastes milliseconds and lets connection counts explode. A **pool** keeps a few connections open and lends them to requests, so you pay setup once and cap how many processes hit the database.",
+    "followUps": ["Why not just raise max_connections?", "What does pool.query do differently from pool.connect?"],
+    "tags": ["postgresql", "connection-pooling"]
+  },
+  {
+    "slug": "postgres-connection-pooling-max-connections",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "easy",
+    "question": "The app hits 'sorry, too many clients already'. Why is raising max_connections to 5000 the wrong fix?",
+    "answer": "Every connection is a process with its own memory, and per-query memory like `work_mem` multiplies with connection count. A server with 16 cores can only execute roughly 16 queries at once, so thousands of active connections just fight over CPU, locks and memory and **throughput drops**. The real fixes are smaller per-process pools, fixing leaks, and a pooler such as **PgBouncer** that maps many clients onto few server connections.",
+    "followUps": ["How would you find out which app holds the connections?"],
+    "tags": ["postgresql", "connection-pooling", "max-connections"]
+  },
+  {
+    "slug": "postgres-connection-pooling-node-transaction",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "medium",
+    "question": "How do you run a transaction with node-postgres, and what are the common mistakes?",
+    "answer": "Check out a dedicated client with `const client = await pool.connect()`, run `BEGIN`, your queries and `COMMIT` on **that client**, `ROLLBACK` in `catch`, and call `client.release()` in `finally`. Mistake one: sending `BEGIN`/`COMMIT` through `pool.query`, where each call may use a different connection, so there's no real transaction. Mistake two: forgetting `release()` on an error path, a **connection leak** that eventually makes every request wait for a free connection.",
+    "explanation": "```js\nconst client = await pool.connect();\ntry {\n  await client.query('BEGIN');\n  await client.query('UPDATE products SET stock = stock - $2 WHERE id = $1 AND stock >= $2', [id, qty]);\n  await client.query('INSERT INTO orders (customer_id, status, total, created_at) VALUES ($1, $2, $3, now())', [cid, 'pending', total]);\n  await client.query('COMMIT');\n} catch (err) {\n  await client.query('ROLLBACK');\n  throw err;\n} finally {\n  client.release();\n}\n```",
+    "followUps": ["What does connectionTimeoutMillis protect you from?", "How would you detect a connection leak in production?"],
+    "tags": ["postgresql", "node-postgres", "transactions"]
+  },
+  {
+    "slug": "postgres-connection-pooling-pgbouncer-modes",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "medium",
+    "question": "What are PgBouncer's pool modes, and what breaks in transaction mode?",
+    "answer": "**Session** mode gives a client a server connection until it disconnects (safe, little reuse). **Transaction** mode returns it after each transaction (high reuse, the usual choice for web apps). **Statement** mode returns it after every statement and rejects multi-statement transactions. In transaction mode, **session state** is unreliable: session-level `SET`, session advisory locks, `LISTEN`/`NOTIFY`, temp tables or `WITH HOLD` cursors across transactions, and SQL-level `PREPARE`. Protocol-level prepared statements historically broke too; newer PgBouncer versions can track them when `max_prepared_statements` is configured.",
+    "explanation": "Workarounds: `SET LOCAL` inside the transaction, `pg_advisory_xact_lock` instead of `pg_advisory_lock`, and a direct (unpooled) connection for `LISTEN`.",
+    "followUps": ["Why is transaction mode a good fit for serverless?", "How would you run a migration tool that needs session features?"],
+    "tags": ["postgresql", "pgbouncer", "connection-pooling"]
+  },
+  {
+    "slug": "postgres-connection-pooling-pool-size",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "medium",
+    "question": "How do you size a connection pool?",
+    "answer": "Start from what the **database** can execute in parallel, not from request count. A common starting point for total connections is roughly `(CPU cores × 2) + effective spindles`, so about 17–20 for an 8-core SSD server, then load test. Divide that across app instances and remember the multiplication: 20 pods × `max: 10` = 200 connections. Small pools usually beat big ones because extra connections only add contention; requests queue cheaply in the pool instead.",
+    "followUps": ["What changes when you add PgBouncer?", "What happens to pool math during a rolling deploy?"],
+    "tags": ["postgresql", "connection-pooling", "pool-sizing"]
+  },
+  {
+    "slug": "postgres-connection-pooling-n-plus-one",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Performance",
+    "difficulty": "medium",
+    "question": "What is the N+1 query problem and how do you fix it?",
+    "answer": "Loading a list with one query and then running **one extra query per item**, e.g. fetching 50 orders and then calling `order.getCustomer()` 50 times. Each query is fast, but 51 round trips add up and grow with page size. Fix it with a **JOIN** (an ORM `include`), or a second query for all related rows at once: `SELECT id, name FROM customers WHERE id = ANY($1)` with an array of ids. In `pg_stat_statements` it shows up as a cheap query with a huge `calls` count.",
+    "followUps": ["How does DataLoader solve this in GraphQL?", "When are two queries better than a JOIN?"],
+    "tags": ["postgresql", "performance", "orm", "n-plus-one"]
+  },
+  {
+    "slug": "postgres-connection-pooling-keyset-pagination",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Performance",
+    "difficulty": "medium",
+    "question": "Why is OFFSET pagination slow on deep pages, and what's the alternative?",
+    "answer": "`OFFSET 100000` makes PostgreSQL read and discard 100,000 rows before returning 20, so cost grows with page depth. **Keyset pagination** remembers the last row and continues after it: `WHERE (created_at, id) < ($1, $2) ORDER BY created_at DESC, id DESC LIMIT 20`, backed by an index on `(created_at DESC, id DESC)`. On a 300,000-row table this went from 100,020 rows and 1,220 buffers (~25 ms) to 20 rows and 4 buffers (~0.6 ms). The trade-off: no jumping to an arbitrary page number.",
+    "followUps": ["Why include id in the cursor?", "How would you implement 'previous page'?"],
+    "tags": ["postgresql", "performance", "pagination"]
+  },
+  {
+    "slug": "postgres-connection-pooling-work-mem",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Performance",
+    "difficulty": "hard",
+    "question": "Which PostgreSQL memory settings would you tune first, and why is work_mem dangerous?",
+    "answer": "`shared_buffers` (PostgreSQL's page cache, ~25% of RAM as a start), `effective_cache_size` (a planner hint, ~50–75% of RAM, allocates nothing), `maintenance_work_mem` (VACUUM and index builds) and `work_mem`. **`work_mem` applies per sort or hash node, per query, per connection**, and hash nodes can use a multiple of it; parallel workers get their own. So 200 connections × 3 nodes × 64 MB is about 38 GB. Keep the global value modest and raise it per session or role (`SET LOCAL work_mem`) for heavy reports. On SSDs, also lower `random_page_cost` to around 1.1.",
+    "followUps": ["How do you know a sort spilled to disk?", "Why not set shared_buffers to 80% of RAM?"],
+    "tags": ["postgresql", "configuration", "work-mem", "shared-buffers"]
+  },
+  {
+    "slug": "postgres-connection-pooling-scenario-serverless",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Connection pooling",
+    "difficulty": "hard",
+    "question": "Scenario: after moving your Node API to AWS Lambda, a marketing email causes 'too many clients already' errors and the database CPU spikes. What's going on and what do you change?",
+    "answer": "A **connection storm**: every concurrent Lambda instance is its own process with its own pool, so a spike to hundreds or thousands of instances opens thousands of connections, each a new PostgreSQL process. Fixes: create the pool **outside the handler** so warm invocations reuse it, set `max` to 1–2 per instance, and put a **pooler** in front (RDS Proxy, PgBouncer in transaction mode, or the provider's pooler) so the database sees a small fixed number of connections. Then check `pg_stat_activity` and `pg_stat_statements` to confirm connection counts dropped and find the hottest queries.",
+    "explanation": "Also set `connectionTimeoutMillis` so requests fail fast instead of hanging, and make sure the code doesn't rely on session state, since transaction pooling won't preserve it.",
+    "followUps": ["What would you change if the app uses LISTEN/NOTIFY?", "How would you cap Lambda concurrency?"],
+    "tags": ["postgresql", "serverless", "pgbouncer", "scenario"]
+  },
+  {
+    "slug": "postgres-connection-pooling-diagnose-slow",
+    "lessonSlug": "postgres-connection-pooling",
+    "topic": "Performance",
+    "difficulty": "hard",
+    "question": "Scenario: the API got slow but no single query looks terrible. How do you find the cause in PostgreSQL?",
+    "answer": "First **`pg_stat_statements`**, sorted by `total_exec_time`: it shows which query shapes consume the most time overall, and a cheap query with a huge `calls` count points to an N+1. Then **`pg_stat_activity`**: many `idle in transaction` sessions mean leaked or slow app transactions; many `active` sessions waiting on `Lock` mean contention; connection counts near `max_connections` mean pool problems. For the top offenders, run `EXPLAIN (ANALYZE, BUFFERS)` and fix indexes, pagination or query patterns before touching config.",
+    "explanation": "```sql\nSELECT calls, round(total_exec_time) AS total_ms,\n       round(mean_exec_time::numeric, 2) AS mean_ms, left(query, 60)\nFROM pg_stat_statements\nORDER BY total_exec_time DESC LIMIT 10;\n```",
+    "followUps": ["What does idle_in_transaction_session_timeout protect against?", "How do you set up pg_stat_statements?"],
+    "tags": ["postgresql", "performance", "monitoring", "scenario"]
+  }
+]

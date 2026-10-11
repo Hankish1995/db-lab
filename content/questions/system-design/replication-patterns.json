@@ -1,0 +1,86 @@
+[
+  {
+    "slug": "replication-patterns-why-replicate",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "Why do databases replicate data, and what doesn't replication solve?",
+    "answer": "Replication keeps **copies of the same data** on several machines for **high availability** (failover), **read scaling**, **lower latency** (copies near users) and **durability**. It doesn't scale **writes** in a single-leader setup, because every replica must apply every write; that needs sharding. It's also **not a backup**: a bad `DELETE` replicates to every copy instantly.",
+    "followUps": ["How is replication different from sharding?", "What is replication lag?"],
+    "tags": ["replication", "availability"]
+  },
+  {
+    "slug": "replication-patterns-sync-vs-async",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "What is the difference between synchronous and asynchronous replication?",
+    "answer": "With **synchronous** replication the leader waits for a follower to confirm before acknowledging the write, so the write survives a leader crash, but every write is slower and stalls if that follower is down. With **asynchronous** replication the leader acknowledges immediately: fast and available, but writes not yet copied are **lost** if the leader dies. The common middle ground is waiting for one follower or a **majority**, e.g. MongoDB `w: 'majority'` or PostgreSQL `synchronous_standby_names` with `ANY 1 (...)`.",
+    "followUps": ["How does this relate to PACELC?", "Which writes in an e-commerce app would you make synchronous?"],
+    "tags": ["replication", "durability", "consistency"]
+  },
+  {
+    "slug": "replication-patterns-three-architectures",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "Compare single-leader, multi-leader and leaderless replication.",
+    "answer": "**Single-leader**: one node accepts writes and streams them to followers; no write conflicts, simple, but one writer and a failover pause. **Multi-leader**: a leader per region accepts local writes and they sync asynchronously; low write latency and region independence, but **conflicts** need resolution. **Leaderless** (Dynamo-style, e.g. Cassandra): clients write to and read from several replicas using **quorums**; highly available, but also needs conflict handling and offers eventual consistency by default.",
+    "followUps": ["Which would you choose for a checkout system?", "What is a quorum?"],
+    "tags": ["replication", "multi-leader", "leaderless"]
+  },
+  {
+    "slug": "replication-patterns-quorum",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "In a leaderless system, what does W + R > N mean and does it guarantee strong consistency?",
+    "answer": "**N** is the number of replicas, **W** how many must acknowledge a write, **R** how many are asked on a read. If **W + R > N**, every read set overlaps every write set in at least one node, so a read normally sees the latest successful write (e.g. N=3, W=2, R=2). It's **not** a guarantee of linearizability: sloppy quorums, concurrent writes, partially failed writes and clock-based conflict resolution can still return stale or surprising results.",
+    "explanation": "Replicas catch up through **read repair** (fix stale replicas seen during reads), **anti-entropy** (background comparison, often with Merkle trees) and **hinted handoff** (another node holds writes for a down replica).",
+    "followUps": ["What is a sloppy quorum?", "How would you tune W and R for a write-heavy workload?"],
+    "tags": ["replication", "quorum", "leaderless"]
+  },
+  {
+    "slug": "replication-patterns-lww-conflicts",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "How are write conflicts resolved in multi-leader replication, and what's wrong with last-write-wins?",
+    "answer": "Options: **last-write-wins** (highest timestamp wins), application-level **merge** (keep siblings and resolve in code or by the user), **CRDTs** (data types such as counters and sets that merge deterministically), or **avoiding conflicts** by routing each record's writes to one home leader. LWW **silently discards** the losing write, and since clocks on different machines drift, the \"last\" write may not actually be the latest. That's unacceptable for orders or payments.",
+    "followUps": ["Give an example of data that fits a CRDT.", "How would you avoid conflicts entirely?"],
+    "tags": ["replication", "multi-leader", "conflicts", "crdt"]
+  },
+  {
+    "slug": "replication-patterns-read-your-writes",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "A user updates their shipping address, refreshes, and sees the old one. Why, and how do you fix it?",
+    "answer": "The write went to the leader but the read hit a **lagging replica**: a violation of **read-your-writes** consistency. Fixes: read data the user can edit from the **leader** (at least for a short window after they wrote), track the write's log position and only read from a replica that has **caught up** to it (MongoDB causally consistent sessions do this), or route that user's reads to the leader while a \"recently wrote\" flag is set.",
+    "explanation": "Related anomalies: **monotonic reads** (order status goes from Shipped back to Processing when consecutive reads hit different replicas; fix with a sticky replica per user) and **consistent prefix** (an answer appears before its question; fix by keeping causally related writes in the same partition).",
+    "followUps": ["What is monotonic reads?", "How would you implement sticky replica routing?"],
+    "tags": ["replication", "replication-lag", "consistency", "scenario"]
+  },
+  {
+    "slug": "replication-patterns-split-brain-fencing",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "What is split brain, and how do majority elections and fencing tokens prevent it?",
+    "answer": "**Split brain** is when two nodes both believe they're the leader and accept writes, so histories diverge. **Majority elections** ensure only the side of a partition with more than half the voters can elect a leader, and a leader that loses the majority steps down. **Fencing tokens** close the remaining gap: every new leader gets a strictly increasing term or epoch, and storage rejects writes carrying an older token, so a paused old leader that wakes up can't corrupt data.",
+    "explanation": "```text\nold leader (token 33) pauses for a long GC\nnew leader elected → token 34 → writes accepted\nold leader wakes → writes with 33 → rejected\n```",
+    "followUps": ["Why do replica sets use an odd number of voting members?", "What is STONITH?"],
+    "tags": ["replication", "failover", "split-brain", "fencing"]
+  },
+  {
+    "slug": "replication-patterns-failover-lost-writes",
+    "lessonSlug": "replication-patterns",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "Scenario: your async-replicated primary crashed and a replica was promoted. Customers report confirmed orders that no longer exist. What happened and how do you prevent it?",
+    "answer": "With **asynchronous** replication the old primary acknowledged those orders before shipping them to any replica. The promoted replica never had them, and when the old primary rejoins, its un-replicated writes conflict with the new history and are discarded or rolled back. Prevent it by requiring **majority / synchronous acknowledgement** for critical writes (orders, payments), monitoring lag, and making downstream effects (emails, payment captures, cached IDs) depend only on durably committed data, e.g. via an outbox.",
+    "explanation": "This is the latency-vs-durability trade-off from PACELC in practice. MongoDB writes rolled-back data to rollback files; with `w: 'majority'` acknowledged writes survive a failover.",
+    "followUps": ["What's the latency cost of majority writes?", "How would you choose the failover timeout?"],
+    "tags": ["replication", "failover", "durability", "scenario"]
+  }
+]

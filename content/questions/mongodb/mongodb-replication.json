@@ -1,0 +1,93 @@
+[
+  {
+    "slug": "mongodb-replication-what-is-replica-set",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "What is a replica set in MongoDB and why would you use one?",
+    "answer": "A replica set is a group of `mongod` servers holding **the same data**: one **primary** that accepts all writes and **secondaries** that copy its changes. It gives **high availability** (automatic failover if the primary dies), **data redundancy**, and the option to serve some reads from secondaries. It's the standard production deployment; even free Atlas clusters are 3-member replica sets.",
+    "followUps": ["Does a replica set scale writes?", "How is it different from sharding?"],
+    "tags": ["mongodb", "replication", "high-availability"]
+  },
+  {
+    "slug": "mongodb-replication-oplog",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "What is the oplog and how do secondaries use it?",
+    "answer": "The **oplog** (`local.oplog.rs`) is a **capped collection** that records every data change on the primary. Secondaries **tail** it, pull new entries, apply them to their own data and append them to their own oplog. Entries are **idempotent**: an `$inc` is recorded as the resulting value, so applying it twice is safe. If a secondary is down longer than the oplog window, it falls off and needs a full initial sync.",
+    "followUps": ["How would you size the oplog?", "What are change streams built on?"],
+    "tags": ["mongodb", "replication", "oplog"]
+  },
+  {
+    "slug": "mongodb-replication-elections",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "How does failover work in a MongoDB replica set?",
+    "answer": "Members exchange **heartbeats every 2 seconds**. If the primary doesn't respond within `electionTimeoutMillis` (default **10 seconds**), an eligible secondary calls an **election** and needs votes from a **majority of all voting members** to become primary. Drivers then discover the new primary; a typical failover completes in roughly 10–12 seconds. Writes fail during that window, but **retryable writes** retry once against the new primary, hiding most of it from the app.",
+    "followUps": ["What decides which secondary wins?", "What happens to in-flight transactions?"],
+    "tags": ["mongodb", "replication", "failover", "elections"]
+  },
+  {
+    "slug": "mongodb-replication-odd-members",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "Why should a replica set have an odd number of voting members?",
+    "answer": "A primary needs a **strict majority of all voting members**. Three members tolerate one failure; four still tolerate only one (majority is 3), so the 4th adds cost but no fault tolerance. With an even split, like a 2+2 network partition, **neither side has a majority** and there's no primary. The majority rule also prevents **split brain**, where two primaries accept writes at once.",
+    "followUps": ["What is the maximum number of voting members?", "How would you spread members across data centres?"],
+    "tags": ["mongodb", "replication", "elections"]
+  },
+  {
+    "slug": "mongodb-replication-rollback",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "What is a rollback in a replica set and how does w:'majority' prevent it?",
+    "answer": "If a primary acknowledges a write with `w: 1` and then crashes **before** a majority copied it, another member becomes primary without that write. When the old primary rejoins, its diverged writes are **rolled back** and saved to rollback files, so the client was told \"OK\" for data that's no longer in the database. With `w: 'majority'`, a write is acknowledged only once a majority has it, and any member that can win an election must have it, so **majority-acknowledged writes are never rolled back**.",
+    "followUps": ["What is the default write concern today?", "How does read concern majority relate to this?"],
+    "tags": ["mongodb", "replication", "rollback", "write-concern"]
+  },
+  {
+    "slug": "mongodb-replication-arbiter",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "What is an arbiter and why is it discouraged?",
+    "answer": "An **arbiter** is a member that **votes in elections but holds no data**. A primary-secondary-arbiter set has only **two copies** of your data: if the secondary fails, `w: 'majority'` writes can't be acknowledged and block or time out, and the default write concern for such setups can fall back to `w: 1`, reintroducing rollback risk. It can also cause cache pressure on the primary. A third data-bearing member is almost always the better choice.",
+    "followUps": ["What are priority 0, hidden and delayed members?"],
+    "tags": ["mongodb", "replication", "arbiter"]
+  },
+  {
+    "slug": "mongodb-replication-member-types",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "medium",
+    "question": "What are priority 0, hidden and delayed members used for?",
+    "answer": "A **priority 0** member replicates and votes but **can never become primary**, useful for a weaker machine or a remote data centre. A **hidden** member is priority 0 and **invisible to application reads**, good for dedicated reporting or backups. A **delayed** member is hidden and applies changes a fixed time late (`secondaryDelaySecs`), giving you a window to recover from mistakes like an accidental `drop`.",
+    "followUps": ["Is a delayed member a replacement for backups?"],
+    "tags": ["mongodb", "replication", "member-types"]
+  },
+  {
+    "slug": "mongodb-replication-stale-reads-scenario",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "hard",
+    "question": "Scenario: after you set readPreference to secondaryPreferred to reduce load, users report that their updated shipping address sometimes shows the old value. What's happening and how do you fix it?",
+    "answer": "Replication is **asynchronous**, so secondaries lag behind the primary: the write went to the primary and the next read hit a secondary that hadn't applied it yet, which is a **stale read**. Fix it by reading user-facing, just-written data from the **primary**, or by using a **causally consistent session** with `w: 'majority'` and read concern `majority` so reads in that session wait for the user's own writes. Keep `secondaryPreferred` only for reads that tolerate staleness, like reports, and monitor replication lag with `rs.printSecondaryReplicationInfo()`.",
+    "explanation": "Also question the premise: secondaries apply every write too, so moving reads to them only helps read-heavy load. If the primary is overloaded, check indexes and slow queries first.",
+    "followUps": ["What causes replication lag to spike?", "What does maxStalenessSeconds do?"],
+    "tags": ["mongodb", "replication", "read-preference", "scenario"]
+  },
+  {
+    "slug": "mongodb-replication-not-backup",
+    "lessonSlug": "mongodb-replication",
+    "topic": "Replication",
+    "difficulty": "easy",
+    "question": "Is replication a backup? How is it different from sharding?",
+    "answer": "No. Replication copies **every** change, including mistakes: a bad `deleteMany` is replicated to all members within milliseconds. It protects against **server failure**, while backups protect against **bad data changes and disasters** with point-in-time copies. Sharding is different again: it splits **different** data across machines to scale capacity and writes. Production uses all three: each shard is a replica set, and the cluster is backed up.",
+    "followUps": ["How does a delayed member help?"],
+    "tags": ["mongodb", "replication", "backup", "sharding"]
+  }
+]

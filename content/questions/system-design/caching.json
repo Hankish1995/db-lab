@@ -1,0 +1,85 @@
+[
+  {
+    "slug": "caching-why-cache",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "easy",
+    "question": "Why does caching improve performance, and what do you give up?",
+    "answer": "Real traffic is **read-heavy** and **skewed**: a small set of hot items gets most of the reads, so keeping them in fast memory (Redis, CDN) serves most requests without touching the database. You give up **freshness**: a cache is a copy, so readers may see stale data until the TTL expires or the key is invalidated. You also add a system to operate and new failure modes.",
+    "followUps": ["Where can caches live in a web app?", "What would you never cache?"],
+    "tags": ["caching", "performance"]
+  },
+  {
+    "slug": "caching-cache-aside",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "easy",
+    "question": "Explain the cache-aside pattern.",
+    "answer": "The **application** manages the cache. On read: check the cache; on a hit return it; on a miss read the database, store the result in the cache with a TTL, and return it. On write: update the database, then **delete** the cache key so the next read reloads fresh data. It only caches what's actually requested, and the app still works if the cache is down.",
+    "explanation": "```ts\nconst cached = await redis.get(key);\nif (cached !== null) return JSON.parse(cached);\nconst product = await products.findOne({ _id });\nawait redis.set(key, JSON.stringify(product), 'EX', 300);\nreturn product;\n```",
+    "followUps": ["Why delete the key instead of updating it on write?", "How is read-through different?"],
+    "tags": ["caching", "cache-aside", "redis"]
+  },
+  {
+    "slug": "caching-write-through-vs-write-behind",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "medium",
+    "question": "What is the difference between write-through and write-behind caching?",
+    "answer": "**Write-through** writes to the cache and the database synchronously, so the cache is fresh after every write but writes are slower. **Write-behind (write-back)** writes to the cache, acknowledges immediately, and flushes to the database later, often in batches: very fast writes, but if the cache node fails before flushing, **acknowledged writes are lost**. Use write-behind only for data you can afford to lose or rebuild, like view counters.",
+    "followUps": ["What is refresh-ahead?", "Which pattern would you use for product prices?"],
+    "tags": ["caching", "write-through", "write-behind"]
+  },
+  {
+    "slug": "caching-eviction-policies",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "medium",
+    "question": "How does Redis decide what to evict, and which policy would you choose for a cache?",
+    "answer": "When `maxmemory` is reached, Redis applies `maxmemory-policy`. The default `noeviction` rejects writes. For a pure cache, `allkeys-lru` (least recently used) or `allkeys-lfu` (least frequently used, better when some keys stay consistently hot) are typical. `volatile-*` policies only evict keys with a TTL, useful if the same instance holds data you must not lose, though separate instances are cleaner. Redis approximates LRU/LFU by sampling keys.",
+    "followUps": ["What's the role of TTL if you already have eviction?", "LRU vs LFU: when does LRU behave badly?"],
+    "tags": ["caching", "redis", "eviction"]
+  },
+  {
+    "slug": "caching-stampede",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "medium",
+    "question": "What is a cache stampede (thundering herd), and how do you prevent it?",
+    "answer": "When a **hot key expires**, thousands of concurrent requests miss at once and all run the same expensive query, which can overload the database. Prevent it with **request coalescing** (one in-flight load per key), a **distributed lock** (`SET lock NX EX`) so only one request rebuilds, **early probabilistic expiration** or refresh-ahead so a single request refreshes before expiry, and **serve-stale-while-revalidate**. Add **jittered TTLs** so many keys don't expire together (which is the related avalanche problem).",
+    "followUps": ["What's the difference between stampede, penetration and avalanche?", "What happens if the lock holder crashes?"],
+    "tags": ["caching", "stampede", "thundering-herd"]
+  },
+  {
+    "slug": "caching-penetration-bloom-filter",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "medium",
+    "question": "Attackers are requesting random product IDs that don't exist, and every request hits the database. What is this and how do you stop it?",
+    "answer": "This is **cache penetration**: lookups for keys that don't exist never get cached, so each one reaches the database. Fixes: **cache negative results** (store \"not found\" with a short TTL), **validate input** (reject malformed IDs early), rate-limit, and put a **Bloom filter** of existing IDs in front: it answers \"definitely not present\" with no false negatives, so most bogus IDs are rejected without a database query; false positives just fall through to a normal lookup.",
+    "followUps": ["Why can't a Bloom filter have false negatives?", "How do you keep the Bloom filter updated as products are added?"],
+    "tags": ["caching", "penetration", "bloom-filter", "scenario"]
+  },
+  {
+    "slug": "caching-invalidation-race",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "hard",
+    "question": "Even with \"update the database, then delete the key\", cache-aside can serve stale data. How, and how do you mitigate it?",
+    "answer": "A reader misses the cache and reads the **old** value from the database; a writer then updates the database and deletes the key; finally the slow reader **sets the old value** into the cache. It stays stale until the TTL expires. Mitigations: always use a **TTL** to bound the damage, **delayed double delete**, store a **version** with the value and refuse to overwrite a newer one, **leases** that reject a set after an invalidation, or drive invalidation from **CDC** so no path forgets it.",
+    "explanation": "Timeline:\n\n```text\nReader: GET → miss; read DB → 100\nWriter:                 UPDATE → 80; DEL key\nReader: SET key = 100   ← stale\n```",
+    "followUps": ["Why is deleting safer than setting the new value on write?", "Would write-through avoid this?"],
+    "tags": ["caching", "invalidation", "consistency"]
+  },
+  {
+    "slug": "caching-flash-sale-design",
+    "lessonSlug": "caching",
+    "topic": "Caching",
+    "difficulty": "hard",
+    "question": "Design caching for a flash sale: one product page gets 50,000 requests per second and stock changes constantly. What do you cache and what do you not cache?",
+    "answer": "Cache the **static parts** of the page (description, images, price) at the CDN and in Redis with a TTL, protected against stampede (coalescing, lock, early refresh). Show stock as an **approximate** value (\"in stock\" / \"few left\") from a short-TTL cache. **Never** decide the purchase from cached stock: checkout does an atomic conditional decrement in the database, optionally behind a Redis `DECR` gate that turns away most losers early. Personalized parts (cart, user info) are fetched separately and never cached publicly.",
+    "explanation": "The key line for the interviewer: cache what users browse, never what the business decides on. Also mention pre-warming the cache before the sale starts.",
+    "followUps": ["How would you invalidate the price if it changes mid-sale?", "What happens if Redis goes down during the sale?"],
+    "tags": ["caching", "scenario", "system-design", "inventory"]
+  }
+]

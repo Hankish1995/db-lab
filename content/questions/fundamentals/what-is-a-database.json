@@ -1,0 +1,84 @@
+[
+  {
+    "slug": "what-is-a-database-db-vs-dbms",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Database basics",
+    "difficulty": "easy",
+    "question": "What is the difference between data, a database and a DBMS?",
+    "answer": "**Data** is raw facts (an order, a price). A **database** is an organised collection of that data. A **DBMS** is the software that stores, queries, secures and protects the database, for example PostgreSQL or MongoDB. So `shop` is a database; PostgreSQL is the DBMS that manages it.",
+    "followUps": ["What does a DBMS give you that a file doesn't?", "Is MongoDB a database or a DBMS?"],
+    "tags": ["database", "dbms"]
+  },
+  {
+    "slug": "what-is-a-database-why-not-files",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Database basics",
+    "difficulty": "easy",
+    "question": "Why use a database instead of storing data in JSON files?",
+    "answer": "A DBMS gives you four things files don't: **concurrency control** (many users writing safely, no lost updates), **efficient querying** (indexes and a query planner instead of loading everything), **integrity** (types, constraints, validation) and **crash safety** (a write-ahead log so a crash never leaves half-written data). It also handles data larger than RAM, security and backups.",
+    "explanation": "The classic failure with a JSON file is the **lost update**: two requests both read `stock = 1`, both write `stock = 0`, and you sell one item twice. A database prevents this with locking/MVCC, atomic updates or transactions.",
+    "followUps": ["What is a lost update?", "When is a plain file actually fine?"],
+    "tags": ["database", "concurrency", "integrity"]
+  },
+  {
+    "slug": "what-is-a-database-table-vs-collection",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Data models",
+    "difficulty": "easy",
+    "question": "How do tables, rows and columns map to MongoDB concepts?",
+    "answer": "A **table** maps to a **collection**, a **row** to a **document**, and a **column** to a **field**. The big difference: rows in a table share a fixed set of typed columns, while documents can have different shapes and can **embed** nested objects and arrays. Relational data is linked across tables with keys; document data is often embedded together.",
+    "followUps": ["What is a schema?", "Does MongoDB enforce a schema?"],
+    "tags": ["data-model", "mongodb", "relational"]
+  },
+  {
+    "slug": "what-is-a-database-oltp-vs-olap",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Workloads",
+    "difficulty": "medium",
+    "question": "What is the difference between OLTP and OLAP?",
+    "answer": "**OLTP** serves the application: many small, fast reads and writes touching a few rows by key, like placing an order. **OLAP** serves analytics: few large queries that scan and aggregate millions of rows, like revenue per category per month. OLTP databases (PostgreSQL, MongoDB) are usually row-oriented; OLAP warehouses (BigQuery, Snowflake, ClickHouse) are usually **column-oriented** so aggregates read only the columns they need.",
+    "followUps": ["Why is column-oriented storage faster for analytics?", "Why not run reports on the production database?"],
+    "tags": ["oltp", "olap", "analytics"]
+  },
+  {
+    "slug": "what-is-a-database-wal",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Storage internals",
+    "difficulty": "medium",
+    "question": "What is a write-ahead log and why do databases use one?",
+    "answer": "A **write-ahead log** is an append-only file where the database records every change **before** modifying the data files. The log is flushed to disk (`fsync`) at commit, while the changed pages stay in memory and are written later in batches at checkpoints. After a crash, the database **replays the log** to redo committed changes. This makes writes fast (sequential appends) and durable. PostgreSQL calls it the **WAL**; MongoDB's WiredTiger calls it the **journal**.",
+    "followUps": ["What is a checkpoint?", "What is a page?", "How does the WAL relate to replication?"],
+    "tags": ["wal", "durability", "storage"]
+  },
+  {
+    "slug": "what-is-a-database-pages-and-cache",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Storage internals",
+    "difficulty": "medium",
+    "question": "At a high level, how does a database store and read data?",
+    "answer": "Data is stored on disk in fixed-size **pages** (8 KB by default in PostgreSQL), and the database always reads and writes whole pages. Recently used pages are cached in memory (PostgreSQL **shared buffers**, WiredTiger **cache**), so hot data is served from RAM. **Indexes**, usually B-trees, map values to locations so queries don't scan every page. That's why a working set that fits in memory and the right indexes matter so much for performance.",
+    "followUps": ["What happens when the working set doesn't fit in memory?", "What is a B-tree?"],
+    "tags": ["storage", "pages", "cache", "indexes"]
+  },
+  {
+    "slug": "what-is-a-database-types",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Database types",
+    "difficulty": "medium",
+    "question": "Name the main types of databases and when you'd use each.",
+    "answer": "**Relational** (PostgreSQL) for structured, related data and transactions. **Document** (MongoDB) for JSON-like records read as a whole. **Key-value** (Redis) for caching and sessions. **Wide-column** (Cassandra) for massive write volumes by partition key. **Graph** (Neo4j) when relationships are the query. **Time-series** (TimescaleDB, InfluxDB) for metrics. **Search** (Elasticsearch) for full-text relevance. **Vector** (Pinecone, pgvector) for embedding similarity search.",
+    "followUps": ["Which would you use for a product search box?", "Can one database cover several of these?"],
+    "tags": ["database-types", "nosql", "relational"]
+  },
+  {
+    "slug": "what-is-a-database-ecommerce-design",
+    "lessonSlug": "what-is-a-database",
+    "topic": "Database types",
+    "difficulty": "hard",
+    "question": "You're building an e-commerce platform from scratch. Which data stores would you use and for what?",
+    "answer": "Start with **one primary OLTP database** (PostgreSQL or MongoDB) for users, products, orders, payments and inventory, because those need transactions and integrity. Add **Redis** for sessions, cart caching and rate limiting; **object storage** (S3) for images with only URLs in the database; a **search engine** (Elasticsearch/OpenSearch or Atlas Search) once product search needs relevance and typo tolerance; and a **warehouse** for reporting so analytics never slows checkout. Add each store only when a real access pattern justifies its operational cost.",
+    "explanation": "Interviewers look for two things: matching each store to an **access pattern**, and restraint. Every extra datastore means sync pipelines, more failure modes and more on-call. A good answer says what you'd start with and what would trigger adding the next store.",
+    "followUps": ["How do you keep the search index in sync with the database?", "What if the team is tiny?"],
+    "tags": ["system-design", "polyglot-persistence", "ecommerce"]
+  }
+]
