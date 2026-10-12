@@ -133,12 +133,14 @@ export function exportProgress() {
   URL.revokeObjectURL(url);
 }
 
-/** Replaces progress with the contents of an exported file. Returns how many entries were loaded. */
+/**
+ * Replaces progress with the contents of an exported file. Returns how many entries were loaded;
+ * 0 means the file had no DB Lab progress and nothing was changed.
+ */
 export async function importProgress(file: File): Promise<number> {
   const entries = parse(await file.text());
   const count = Object.keys(entries).length;
-  if (count === 0) throw new Error('This file has no DB Lab progress in it.');
-  commit(entries);
+  if (count > 0) commit(entries);
   return count;
 }
 

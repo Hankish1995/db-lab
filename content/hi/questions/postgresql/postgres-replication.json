@@ -1,0 +1,70 @@
+[
+  {
+    "slug": "postgres-replication-streaming-basics",
+    "topic": "Replication",
+    "question": "PostgreSQL में streaming replication कैसे काम करता है?",
+    "answer": "हर change पहले **WAL** में लिखा जाता है। **Physical streaming replication** में primary का walsender WAL records को हर standby के walreceiver तक stream करता है, और standby उन्हें **replay** करता है, यानी वह हमेशा recovery mode में रहता है। Standby same major version पर पूरे cluster की block-level copy होता है, और **hot standby** के साथ read-only queries serve करता है। इसका इस्तेमाल high availability और read scaling के लिए होता है, ज़्यादा write capacity के लिए नहीं।",
+    "followUps": ["नया standby कैसे बनाते हैं?", "Standby कितना पीछे है, यह कैसे measure करते हैं?"]
+  },
+  {
+    "slug": "postgres-replication-not-a-backup",
+    "topic": "Replication",
+    "question": "क्या replica एक backup है? RPO और RTO क्या हैं?",
+    "answer": "नहीं। Replica **हर change copy करती है, ग़लतियाँ भी**: ग़लती से चला `DELETE FROM orders` standbys पर milliseconds में replay हो जाता है। Backups (base backup और archived WAL) आपको ग़लती से **पहले** के किसी point तक restore करने देते हैं। **RPO** यह है कि आप कितना data खोना झेल सकते हैं, समय में मापा गया; **RTO** यह है कि आप कितनी देर down रहना झेल सकते हैं। Replication ज़्यादातर RTO सुधारता है; RPO backups और sync replication तय करते हैं।",
+    "followUps": ["Point-in-time recovery क्या है?", "Asynchronous replication आपको कितना RPO देता है?"]
+  },
+  {
+    "slug": "postgres-replication-async-vs-sync",
+    "topic": "Replication",
+    "question": "PostgreSQL में asynchronous और synchronous replication में क्या फ़र्क है?",
+    "answer": "**Asynchronous** replication (default) में primary अपना WAL flush होते ही commit acknowledge कर देता है और WAL बाद में भेजता है, इसलिए यह तेज़ है, लेकिन primary crash होने पर failover में आख़िरी commits खो सकते हैं। **Synchronous** replication (`synchronous_standby_names` set, `synchronous_commit = on`) में commit तब तक इंतज़ार करता है जब तक कोई standby WAL flush न कर दे, इसलिए failover पर कोई data loss नहीं होता, लेकिन हर commit पर एक network round trip की कीमत लगती है। और अगर कोई synchronous standby उपलब्ध नहीं है, तो commits **अटक जाते हैं**।",
+    "explanation": "`synchronous_commit` के levels: `off`, `local`, `remote_write` (standby ने OS में लिख दिया), `on` (standby ने disk पर flush कर दिया), `remote_apply` (standby ने replay कर दिया, इसलिए वहाँ reads को दिखता है)। दो standbys के साथ `ANY 1 (s1, s2)` use करें ताकि एक failure writes को block न करे। इस setting को `SET LOCAL synchronous_commit` से हर transaction के लिए बदला जा सकता है।",
+    "followUps": ["remote_apply क्या guarantee देता है?", "Sync standby मरने पर writes अटकने से कैसे बचें?"]
+  },
+  {
+    "slug": "postgres-replication-read-your-writes",
+    "topic": "Replication",
+    "question": "एक user अपना address update करता है, refresh करता है, और उसे पुराना address दिखता है। आप read replicas use करते हैं। क्या हो रहा है और इसे कैसे ठीक करेंगे?",
+    "answer": "**Replication lag**: write primary पर गया, लेकिन अगला read एक async replica पर पहुँचा जिसने उसे अभी replay नहीं किया था, यानी **read-your-writes** का उल्लंघन। Fixes: user के अपने data के लिए या write के बाद कुछ seconds तक **primary** से पढ़ें (sticky routing), या write के बाद primary का LSN (`pg_current_wal_lsn()`) record करें और सिर्फ़ उस replica को use करें जिसका `pg_last_wal_replay_lsn()` उससे आगे निकल चुका हो। `synchronous_commit = remote_apply` भी synchronous standbys पर इसकी guarantee देता है, latency की कीमत पर।",
+    "explanation": "Replicas को उन reads के लिए रखें जो staleness झेल सकते हैं: product listings, search, reports। Lag को `pg_stat_replication` में `replay_lag` से monitor करें।",
+    "followUps": ["Replication lag कैसे monitor करते हैं?", "Replica पर लंबी report cancel क्यों हो सकती है?"]
+  },
+  {
+    "slug": "postgres-replication-slots",
+    "topic": "Replication",
+    "question": "Replication slot क्या है, और इसे use करने का ख़तरा क्या है?",
+    "answer": "**Replication slot** primary को वह **सारा WAL रखने** पर मजबूर करता है जिसे उसके consumer (एक standby या logical replication/CDC client) ने अभी confirm नहीं किया, ताकि disconnect के बाद consumer हमेशा catch up कर सके। ख़तरा: अगर consumer ग़ायब हो जाए, तो **abandoned slot** WAL को हमेशा रखता है, `pg_wal` तब तक बढ़ता है जब तक **disk भर न जाए** और primary रुक न जाए। `pg_replication_slots` (`active`, retained WAL) monitor करें, unused slots drop करें, और safety limit के रूप में `max_slot_wal_keep_size` set करें।",
+    "followUps": ["Slot के बिना जो standby बहुत पीछे रह जाए, उसका क्या होता है?"]
+  },
+  {
+    "slug": "postgres-replication-logical-vs-physical",
+    "topic": "Replication",
+    "question": "Logical बनाम physical replication: हर एक कब use करेंगे?",
+    "answer": "**Physical** replication raw WAL stream करता है, जिससे same major version पर **पूरे cluster** की read-only, हूबहू copy बनती है: इसे HA और read replicas के लिए use करें। **Logical** replication चुनी हुई tables के decoded **row changes** को **publications** और **subscriptions** के ज़रिए एक normal writable database में भेजता है, जो **अलग major version** पर चल सकता है: इसे कम downtime वाले upgrades, tables के एक हिस्से को copy करने, या CDC के लिए use करें। Logical replication DDL replicate नहीं करता, और updates और deletes के लिए tables में primary key या replica identity चाहिए।",
+    "followUps": ["PostgreSQL 15 से 17 तक कम से कम downtime के साथ upgrade कैसे करेंगे?", "Logical replication के लिए wal_level क्या होना चाहिए?"]
+  },
+  {
+    "slug": "postgres-replication-failover",
+    "topic": "Replication",
+    "question": "क्या PostgreSQL अपने-आप failover करता है? Split-brain क्या है और इसे कैसे रोका जाता है?",
+    "answer": "नहीं। PostgreSQL एक standby को **promote** कर सकता है (`pg_promote()`), लेकिन वह failures detect नहीं करता और नया primary elect नहीं करता। यह काम **Patroni** जैसे tools (etcd/Consul को consensus store बनाकर, जिसमें leader lock रहता है) या managed services करती हैं। **Split-brain** का मतलब है दो nodes का एक साथ primary की तरह काम करना, आम तौर पर जब पुराना primary सिर्फ़ कट गया था और वापस आ जाता है, जिससे writes अलग-अलग दिशाओं में चले जाते हैं। इसे **consensus** (सिर्फ़ leader-lock रखने वाला ही primary हो सकता है) और **fencing** से रोका जाता है: पुराना primary lock खोने पर ख़ुद को demote कर लेता है, या उसे बंद कर दिया जाता है, फिर वह standby के रूप में वापस जुड़ता है, अक्सर `pg_rewind` के ज़रिए।",
+    "explanation": "MongoDB replica sets से तुलना करें, जहाँ elections और majority voting server में ही built-in हैं। PostgreSQL में app को एक stable endpoint (DNS, virtual IP, HAProxy, या cloud endpoint) से connect करना चाहिए जो primary के साथ चलता है, और connection errors पर retry करना चाहिए।",
+    "followUps": ["आपकी application नया primary कैसे ढूँढती है?", "etcd nodes की odd संख्या की सलाह क्यों दी जाती है?"]
+  },
+  {
+    "slug": "postgres-replication-pitr",
+    "topic": "Replication",
+    "question": "14:30 पर किसी ने production में WHERE clause के बिना DELETE FROM orders चला दिया। आप recover कैसे करेंगे?",
+    "answer": "Replicas मदद नहीं करेंगी, क्योंकि delete पहले ही replicate हो चुका है। **Base backups और WAL archiving** के साथ आप **point-in-time recovery** करते हैं: 14:30 से पहले लिया गया latest base backup एक नए server पर restore करें, `recovery_target_time` को delete से ठीक पहले (जैसे 14:29:00) set करें, और PostgreSQL को archived WAL उस point तक replay करने दें। फिर या तो उस पर failover करें या ग़ायब `orders` rows को वापस production में copy करें। सिर्फ़ nightly `pg_dump` होने पर आप एक दिन तक का data खो सकते हैं, इसीलिए PITR (pgBackRest, Barman, WAL-G या managed service के ज़रिए) production standard है।",
+    "explanation": "इसके बाद: production में ad-hoc writes कौन चला सकता है, इसे सीमित करें, और नियमित रूप से restores का अभ्यास करें। जिस backup को आपने कभी restore नहीं किया, वह backup नहीं, सिर्फ़ एक उम्मीद है।",
+    "followUps": ["pg_dump और pg_basebackup में क्या फ़र्क है?", "यह setup कितना RPO और RTO देता है?"]
+  },
+  {
+    "slug": "postgres-replication-design-ha",
+    "topic": "Replication",
+    "question": "एक e-commerce checkout के लिए highly available PostgreSQL setup design करें, जिसमें paid orders कभी नहीं खोने चाहिए।",
+    "answer": "एक primary और अलग-अलग availability zones में **दो standbys**, जिन्हें 3-node etcd cluster के साथ **Patroni** manage करता है (या वही guarantees देने वाली managed service)। `synchronous_standby_names = 'ANY 1 (s1, s2)'` के साथ **synchronous replication** use करें, ताकि हर paid order कम से कम दो machines पर हो और एक standby का outage writes को block न करे। App एक ऐसे endpoint से connect करती है जो leader के साथ चलता है, और idempotent operations retry करती है। PITR के लिए object storage में continuous WAL archiving के साथ **pgBackRest** base backups जोड़ें, replication lag और slots पर alerts लगाएँ, और नियमित failover और restore drills करें।",
+    "explanation": "Trade-offs जो बताने चाहिए: sync replication commit latency बढ़ाता है, इसलिए analytics events जैसे कम क़ीमत वाले writes के लिए आप इसे per transaction ढीला कर सकते हैं (`SET LOCAL synchronous_commit = local`)। Regions के पार sync replication आम तौर पर बहुत धीमा होता है, इसलिए remote region को अक्सर disaster recovery के लिए एक async standby मिलता है, non-zero RPO के साथ।",
+    "followUps": ["अगर दोनों standbys down हो जाएँ तो क्या होगा?", "Read traffic आप कहाँ भेजेंगे?"]
+  }
+]

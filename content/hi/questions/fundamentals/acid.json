@@ -1,0 +1,68 @@
+[
+  {
+    "slug": "acid-what-is-a-transaction",
+    "topic": "ACID",
+    "question": "Database transaction क्या होता है?",
+    "answer": "**Transaction** reads और writes का एक group है जिसे database **एक अविभाज्य unit** मानता है: या तो इसके सारे changes commit होते हैं, या कोई भी नहीं। उदाहरण के लिए, checkout wallet से पैसे काटता है, stock घटाता है और एक order insert करता है; अगर कोई भी step fail हो, तो सब कुछ roll back हो जाता है। SQL में आप इसे `BEGIN` … `COMMIT` (या `ROLLBACK`) में wrap करते हैं।",
+    "followUps": ["ACID का full form क्या है?", "MongoDB में transaction कैसे चलाते हैं?"]
+  },
+  {
+    "slug": "acid-explain-each-property",
+    "topic": "ACID",
+    "question": "ACID के हर letter को एक उदाहरण के साथ समझाइए।",
+    "answer": "**Atomicity**: सब कुछ या कुछ भी नहीं; wallet से पैसे कटने के बाद लेकिन order बनने से पहले crash हो जाए, तो debit undo हो जाता है। **Consistency**: हर commit के बाद data declared नियमों के हिसाब से valid रहता है, जैसे `stock >= 0`। **Isolation**: concurrent transactions एक-दूसरे का अधूरा काम नहीं देखते, इसलिए दो buyers दोनों आख़िरी item नहीं ले सकते। **Durability**: एक बार commit होने के बाद order crash या बिजली जाने पर भी बचा रहता है।",
+    "followUps": ["किस property के लिए application भी कुछ हद तक ज़िम्मेदार है?", "Isolation कौन-सी anomalies रोकता है?"]
+  },
+  {
+    "slug": "acid-how-durability-works",
+    "topic": "ACID internals",
+    "question": "Databases atomicity और durability की guarantee कैसे देते हैं?",
+    "answer": "**Write-ahead log** से (PostgreSQL में WAL, MongoDB में journal)। Changes log में record होते हैं, और commit के समय database OK reply करने से पहले log को **fsync** से disk पर flush करता है। Crash के बाद log replay करके committed changes **redo** किए जाते हैं, और जिसका commit record नहीं है वह discard हो जाता है। PostgreSQL को 'undo' वाला हिस्सा MVCC से मिलता है: aborted transaction के नए row versions बस कभी visible ही नहीं होते।",
+    "explanation": "Data pages checkpoints पर आराम से (lazily) लिखे जाते हैं, इसलिए commit के समय disk तक पहुँचना सिर्फ़ sequential log append को ज़रूरी है। इसी वजह से WAL databases को तेज़ भी बनाता है और crash-safe भी। PostgreSQL का `synchronous_commit = off` या MongoDB में journaling के बिना `w: 1` जैसी settings latency के बदले थोड़ी durability छोड़ देती हैं।",
+    "followUps": ["fsync क्या करता है?", "synchronous_commit = off का risk क्या है?"]
+  },
+  {
+    "slug": "acid-isolation-levels",
+    "topic": "Isolation",
+    "question": "Isolation levels कौन-से हैं, और PostgreSQL का default कौन-सा है?",
+    "answer": "SQL standard **Read Uncommitted, Read Committed, Repeatable Read और Serializable** define करता है, और हर level पिछले से ज़्यादा anomalies रोकता है (dirty reads, non-repeatable reads, phantoms)। PostgreSQL का default **Read Committed** है, जिसमें हर statement को एक नया snapshot दिखता है। PostgreSQL में Read Uncommitted, Read Committed जैसा ही behave करता है, Repeatable Read पूरे transaction के लिए एक snapshot इस्तेमाल करता है, और Serializable transactions को serialization error के साथ abort कर सकता है, जिसे आपको retry करना होता है।",
+    "followUps": ["MVCC क्या है?", "क्या Read Committed lost updates रोकता है?"]
+  },
+  {
+    "slug": "acid-vs-cap-consistency",
+    "topic": "ACID",
+    "question": "क्या ACID का C और CAP का C एक ही है?",
+    "answer": "नहीं। **ACID consistency** का मतलब है कि transaction data को आपके नियमों और constraints के हिसाब से valid रखता है, जैसे negative stock न हो और foreign keys valid हों। **CAP consistency** का मतलब है distributed system में **linearizability**: हर read सबसे हाल का write return करता है, चाहे आप किसी भी replica से पूछें। एक को तोड़े बिना दूसरा टूट सकता है: एक stale replica CAP consistency तोड़ देता है, भले ही हर invariant सही हो।",
+    "followUps": ["Linearizability क्या है?", "BASE क्या है?"]
+  },
+  {
+    "slug": "acid-mongodb-transactions",
+    "topic": "MongoDB transactions",
+    "question": "MongoDB atomicity और transactions को कैसे handle करता है?",
+    "answer": "**Single document** पर हर write atomic होता है, उसके embedded arrays और subdocuments समेत, इसलिए अच्छे से modelled data को अक्सर transaction की ज़रूरत ही नहीं पड़ती। कई documents या collections में changes के लिए MongoDB replica sets और sharded clusters पर **multi-document ACID transactions** support करता है, session के ज़रिए: `session.withTransaction(async () => { … }, opts)`, और हर operation को `{ session }` pass करना होता है। ये snapshot isolation इस्तेमाल करते हैं, इनकी default 60-second runtime limit होती है और ये single-document writes से ज़्यादा महँगे होते हैं।",
+    "explanation": "```js\nconst session = client.startSession();\ntry {\n  await session.withTransaction(async () => {\n    await wallets.updateOne({ userId, balance: { $gte: 2999 } }, { $inc: { balance: -2999 } }, { session });\n    await orders.insertOne({ userId, status: 'paid' }, { session });\n  });\n} finally {\n  await session.endSession();\n}\n```\n`withTransaction` transient errors पर retry करता है, इसलिए emails जैसे side effects callback के बाहर रखें।",
+    "followUps": ["अगर आप session pass करना भूल जाएँ तो क्या होता है?", "Transactions को replica set क्यों चाहिए?"]
+  },
+  {
+    "slug": "acid-vs-base",
+    "topic": "ACID",
+    "question": "BASE क्या है और यह ACID से कैसे अलग है?",
+    "answer": "**BASE** का मतलब है **Basically Available, Soft state, Eventually consistent**: system available रहता है और replicas समय के साथ एक जैसे हो जाते हैं, बजाय इसके कि हर reader को latest committed value दिखने की guarantee हो। **ACID** हर transaction के सही होने (correctness) को प्राथमिकता देता है; BASE availability और scale को। यह एक spectrum है: payments और inventory को ACID चाहिए, जबकि like counters या activity feeds BASE झेल सकते हैं।",
+    "followUps": ["MongoDB ACID है या BASE?", "E-commerce app में आप eventual consistency कहाँ स्वीकार करेंगे?"]
+  },
+  {
+    "slug": "acid-oversell-scenario",
+    "topic": "Isolation",
+    "question": "Flash sale के दौरान आपके store ने एक product के 105 units बेच दिए, जबकि stock में सिर्फ़ 100 थे। Code stock पढ़ता है, Node में उसे check करता है, फिर नई value लिखता है। क्या गलत हुआ और इसे कैसे ठीक करेंगे?",
+    "answer": "यह एक **lost update** race है: concurrent requests एक ही stock पढ़ती हैं, हर एक Node में check pass कर लेती है, और हर एक अपनी calculate की हुई value लिखती है, इसलिए decrements एक-दूसरे को overwrite कर देते हैं। Fix यह है कि check और write को **एक atomic operation** बनाया जाए: `UPDATE products SET stock = stock - 1 WHERE id = $1 AND stock > 0` और affected row count check करें, या MongoDB में `updateOne({ _id, stock: { $gte: 1 } }, { $inc: { stock: -1 } })` और `modifiedCount` check करें। Safety net के तौर पर `CHECK (stock >= 0)` constraint जोड़ें, और अगर stock update को order insert के साथ ही होना है तो transaction इस्तेमाल करें।",
+    "explanation": "विकल्प: पढ़ने से पहले row को lock करने के लिए `SELECT … FOR UPDATE`, या retries के साथ Serializable isolation। **Read Committed** पर एक सादा transaction अपने-आप application code में होने वाले read-then-write को ठीक नहीं करता। बहुत ज़्यादा hot items के लिए reservation queue या pre-split stock counters पर विचार करें।",
+    "followUps": ["क्या पुराने code को transaction में wrap करने से यह ठीक हो जाएगा?", "एक hot product जिसके हर second हज़ारों buyers हों, उसे आप कैसे handle करेंगे?"]
+  },
+  {
+    "slug": "acid-when-not-to-use-transactions",
+    "topic": "Transactions",
+    "question": "आप multi-statement transaction से कब बचेंगे, और उसकी जगह क्या इस्तेमाल करेंगे?",
+    "answer": "जब एक **single atomic write** काफ़ी हो (एक row या एक document, `$inc` या `stock = stock - 1` जैसे atomic operators), जब data एक MongoDB document में **embedded** हो सकता हो, और जब काम ऐसी **external services** तक फैला हो जिन्हें database transaction cover नहीं कर सकता। Cross-service flows के लिए **outbox pattern** या compensating actions और idempotent steps वाला **saga** इस्तेमाल करें। Transactions की कीमत latency और lock contention है, इसलिए payment API calls जैसा धीमा काम भी इनके बाहर रखें।",
+    "followUps": ["Outbox pattern क्या है?", "Saga क्या है?"]
+  }
+]

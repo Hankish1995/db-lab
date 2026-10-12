@@ -1,0 +1,93 @@
+[
+  {
+    "slug": "mongoose-in-practice-schema-model-document",
+    "topic": "Mongoose",
+    "question": "Mongoose में Schema, Model और Document में क्या फ़र्क है?",
+    "answer": "**Schema** shape और नियम तय करता है: field types, validators, defaults, indexes, hooks और virtuals। **Model** वो class है जो `model('Order', orderSchema)` से schema से compile होती है और एक collection से बँधी होती है; इसमें `find` और `create` जैसे static query methods होते हैं। **Document** किसी model का एक instance है, change tracking और `save()` जैसे methods वाला एक hydrated object।",
+    "followUps": [
+      "TypeScript में InferSchemaType आपको क्या देता है?",
+      "Hydration क्या है?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-update-validation",
+    "topic": "Mongoose",
+    "question": "क्या Mongoose validation updateOne या findOneAndUpdate पर चलता है?",
+    "answer": "Default रूप से नहीं। Validators `save()` और `create()` पर हमेशा चलते हैं, लेकिन update queries **validation skip करती हैं** जब तक आप `runValidators: true` न दें। तब भी update validators सिर्फ़ **update में मौजूद paths** check करते हैं, `required` सिर्फ़ `$unset` या `null` पर fail होता है, `this` document नहीं होता, और सिर्फ़ कुछ operators validate होते हैं (`$set`, `$unset`, `$push`, `$addToSet`, `$pull`, `$pullAll`), इसलिए `$inc` किसी value को `min` से नीचे धकेल सकता है। Update queries `save` middleware भी trigger नहीं करतीं।",
+    "explanation": "```js\nawait Product.updateOne({ sku }, { $set: { price: -5 } }, { runValidators: true }); // ValidationError\n```\n`$inc` के लिए filter में बचाव करें: `{ _id, stock: { $gte: qty } }`।",
+    "followUps": [
+      "कोई भी app लिखे, नियम हर हाल में कैसे लागू करवाएँगे?",
+      "सभी findOneAndUpdate calls के लिए runValidators कैसे चालू कर सकते हैं?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-middleware-this",
+    "topic": "Mongoose",
+    "question": "Mongoose में document middleware और query middleware में क्या फ़र्क है?",
+    "answer": "**Document middleware** (`save`, `validate`, और `{ document: true }` के साथ `deleteOne`/`updateOne`) एक document पर चलता है, इसलिए `this` **document** होता है और आप `this.total` जैसी fields पढ़ सकते हैं। **Query middleware** (`find`, `findOneAndUpdate`, `updateOne`, `deleteMany`…) एक query पर चलता है, इसलिए `this` **Query** होता है; आप `this.getFilter()`, `this.getUpdate()` या `this.setOptions()` इस्तेमाल करते हैं। एक आम bug है logic को `pre('save')` में रखना और फिर `findByIdAndUpdate` से update करना, जो उसे कभी trigger नहीं करता।",
+    "followUps": [
+      "pre('findOneAndUpdate') के अंदर update को कैसे बदलते हैं?",
+      "insertMany कौन से hooks trigger करता है?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-lean",
+    "topic": "Mongoose",
+    "question": "lean() क्या करता है और इसे कब इस्तेमाल करना चाहिए?",
+    "answer": "`lean()` से query hydrated Mongoose documents के बजाय **plain JavaScript objects** लौटाती है। यह hydration और change tracking skip करता है, इसलिए तेज़ है और कम memory लेता है, लेकिन आप **virtuals, getters/setters और `save()`** खो देते हैं। Orders की list जैसे read-only endpoints के लिए इसे इस्तेमाल करें; जब बदलकर save करना हो तब पूरे documents इस्तेमाल करें।",
+    "followUps": [
+      "lean के साथ virtuals कैसे शामिल करते हैं?",
+      "TypeScript में lean result को type कैसे करते हैं?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-populate-vs-lookup",
+    "topic": "Mongoose",
+    "question": "populate() कैसे काम करता है, और $lookup से इसकी तुलना कैसी है?",
+    "answer": "`populate()` **database join नहीं है**: Mongoose main query चलाता है, referenced ids इकट्ठा करता है, `$in` के साथ **एक और query** चलाता है, और results को **Node.js में** जोड़ता है, यानी हर populated path के लिए एक extra query। इसे इस्तेमाल करना आसान है लेकिन joined fields से ठीक से filter या sort नहीं कर सकता। `$lookup` एक ही aggregation में **MongoDB के अंदर** join करता है। **N+1 problem** तब आती है जब आप query पर एक बार के बजाय loop के अंदर हर document के लिए populate करते हैं।",
+    "followUps": [
+      "Populate करने के बजाय data कब embed करेंगे?",
+      "N+1 query problem क्या है?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-version-key",
+    "topic": "Mongoose",
+    "question": "Mongoose में __v किससे बचाता है? Optimistic concurrency control कैसे पाते हैं?",
+    "answer": "Default रूप से `__v` सिर्फ़ `save()` के साथ **array positions** की रक्षा करता है: जब कोई save किसी array को ऐसे बदलता है जिससे indexes खिसक सकते हैं, तो Mongoose `__v` बढ़ा देता है, और बाद का कोई save जो पुराने `__v` के साथ position से element edit करता है, `VersionError` के साथ fail होता है। यह दो saves को एक-दूसरे के सादे field बदलावों को overwrite करने से **नहीं** रोकता। Schema option `optimisticConcurrency: true` set करने से **हर** `save()` `__v` check करता है और बढ़ाता है। इनमें से कोई भी `updateOne`/`findOneAndUpdate` पर लागू नहीं होता; उनके लिए filter में conditions के साथ atomic operators इस्तेमाल करें।",
+    "explanation": "```js\nconst schema = new Schema({ status: String }, { optimisticConcurrency: true });\n// two loaded copies: first save wins, second throws VersionError\n```",
+    "followUps": [
+      "updateOne से order को pending से paid में सुरक्षित रूप से कैसे ले जाएँगे?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-strict-strictquery",
+    "topic": "Mongoose",
+    "question": "Mongoose में strict और strictQuery में क्या फ़र्क है?",
+    "answer": "`strict` (default `true`) **writes** को control करता है: create या update करते समय जो fields schema में नहीं हैं वो चुपचाप drop हो जाती हैं (या `strict: 'throw'` के साथ reject)। `strictQuery` **filters** को control करता है; Mongoose 7 से इसका default `false` है, इसलिए अनजान filter fields MongoDB तक भेज दी जाती हैं। Typos के मामले में यह ज़्यादा सुरक्षित है: `strictQuery: true` के साथ `deleteMany({ stauts: 'x' })` अनजान field हटा देगा और **सब कुछ** delete कर देगा। दोनों ही हालात में, raw `req.query` को कभी filters में न डालें।",
+    "followUps": [
+      "Query selector injection क्या है?",
+      "sanitizeFilter क्या करता है?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-production-setup",
+    "topic": "Mongoose",
+    "question": "Production में Mongoose के साथ connections और indexes कैसे संभालने चाहिए?",
+    "answer": "Startup पर **एक बार connect करें** और built-in connection pool reuse करें (`maxPoolSize`, driver default 100); कभी हर request पर connect न करें। Serverless functions में connection promise को globally cache करें और pool छोटा रखें, ताकि cluster की connection limit खत्म न हो। Production में **`autoIndex`** बंद रखें, क्योंकि यह app startup पर indexes build करता है, और indexes को deploy या migration step में `Model.createIndexes()` से सोच-समझकर बनाएँ।",
+    "followUps": [
+      "syncIndexes अलग क्या करता है?",
+      "maxPoolSize का size कैसे तय करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongoose-in-practice-debug-scenario",
+    "topic": "Mongoose",
+    "question": "Scenario: किसी order का total कभी-कभी गलत होता है, कुछ products का stock negative है, और GET /orders/abc 500 के साथ crash होता है। आपके schema में stock पर min: 0 है और total pre('save') में compute होता है। क्या चल रहा है?",
+    "answer": "तीन अलग Mongoose gotchas। **गलत totals**: कोई code path items को `findByIdAndUpdate`/`updateOne` से update करता है, जो **`save` hooks नहीं चलाता**, इसलिए total दोबारा compute नहीं होता; logic को एक shared service में ले जाएँ या query middleware में भी संभालें। **Negative stock**: `$inc` **update validators से check नहीं होता** (और वैसे भी `runValidators` के बिना updates validation skip करते हैं); update को `{ _id, stock: { $gte: qty } }` से atomically सुरक्षित करें। **500**: `findById('abc')` एक **`CastError`** throw करता है; `mongoose.isObjectIdOrHexString` से validate करें और 400 लौटाएँ।",
+    "followUps": [
+      "Stock के लिए database-level guarantee कैसे जोड़ेंगे?",
+      "इन bugs के लिए test कैसे करेंगे?"
+    ]
+  }
+]

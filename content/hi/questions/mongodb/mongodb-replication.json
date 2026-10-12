@@ -1,0 +1,90 @@
+[
+  {
+    "slug": "mongodb-replication-what-is-replica-set",
+    "topic": "Replication",
+    "question": "MongoDB में replica set क्या है और आप इसे क्यों इस्तेमाल करेंगे?",
+    "answer": "Replica set `mongod` servers का एक group है जिनमें **एक ही data** होता है: एक **primary** जो सारे writes लेता है और **secondaries** जो उसके बदलाव copy करते हैं। यह **high availability** देता है (primary मरने पर automatic failover), **data redundancy** देता है, और कुछ reads secondaries से serve करने का विकल्प देता है। यही standard production deployment है; free Atlas clusters भी 3-member replica sets होते हैं।",
+    "followUps": [
+      "क्या replica set writes को scale करता है?",
+      "यह sharding से कैसे अलग है?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-oplog",
+    "topic": "Replication",
+    "question": "Oplog क्या है और secondaries इसे कैसे इस्तेमाल करते हैं?",
+    "answer": "**Oplog** (`local.oplog.rs`) एक **capped collection** है जो primary पर हर data बदलाव record करती है। Secondaries इसे **tail** करते हैं, नई entries खींचते हैं, उन्हें अपने data पर लागू करते हैं और अपने oplog में जोड़ते हैं। Entries **idempotent** होती हैं: `$inc` को resulting value के रूप में record किया जाता है, इसलिए उसे दो बार लागू करना सुरक्षित है। अगर कोई secondary oplog window से ज़्यादा देर down रहे, तो वो पीछे छूट जाता है और उसे पूरा initial sync चाहिए।",
+    "followUps": [
+      "Oplog का size आप कैसे तय करेंगे?",
+      "Change streams किस पर बने हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-elections",
+    "topic": "Replication",
+    "question": "MongoDB replica set में failover कैसे काम करता है?",
+    "answer": "Members **हर 2 seconds में heartbeats** का लेन-देन करते हैं। अगर primary `electionTimeoutMillis` (default **10 seconds**) के अंदर जवाब न दे, तो एक eligible secondary **election** बुलाता है और primary बनने के लिए उसे **सभी voting members की majority** के votes चाहिए। फिर drivers नया primary खोज लेते हैं; एक आम failover लगभग 10–12 seconds में पूरा होता है। उस window में writes fail होते हैं, लेकिन **retryable writes** नए primary पर एक बार retry करते हैं, जिससे इसका ज़्यादातर हिस्सा app से छिप जाता है।",
+    "followUps": [
+      "कौन सा secondary जीतेगा, यह क्या तय करता है?",
+      "बीच में चल रहे transactions का क्या होता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-odd-members",
+    "topic": "Replication",
+    "question": "Replica set में voting members की संख्या odd क्यों होनी चाहिए?",
+    "answer": "Primary को **सभी voting members की strict majority** चाहिए। तीन members एक failure झेल सकते हैं; चार भी सिर्फ़ एक ही झेल पाते हैं (majority 3 है), इसलिए चौथा member खर्च बढ़ाता है लेकिन fault tolerance नहीं। बराबर बँटवारे में, जैसे 2+2 network partition, **किसी भी side के पास majority नहीं** होती और कोई primary नहीं रहता। Majority का नियम **split brain** को भी रोकता है, जिसमें दो primaries एक साथ writes लेते हैं।",
+    "followUps": [
+      "Voting members की अधिकतम संख्या क्या है?",
+      "Members को data centres में कैसे बाँटेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-rollback",
+    "topic": "Replication",
+    "question": "Replica set में rollback क्या है और w:'majority' इसे कैसे रोकता है?",
+    "answer": "अगर primary किसी write को `w: 1` के साथ acknowledge करे और फिर majority के copy करने से **पहले** crash हो जाए, तो कोई दूसरा member उस write के बिना primary बन जाता है। जब पुराना primary वापस जुड़ता है, तो उसके अलग हो चुके writes **rollback** होकर rollback files में save हो जाते हैं, यानी client को ऐसे data के लिए \"OK\" बताया गया जो अब database में है ही नहीं। `w: 'majority'` के साथ, write तभी acknowledge होता है जब majority के पास पहुँच जाए, और election जीत सकने वाले हर member के पास वो होना ही चाहिए, इसलिए **majority-acknowledged writes कभी rollback नहीं होते**।",
+    "followUps": [
+      "आज default write concern क्या है?",
+      "Read concern majority का इससे क्या संबंध है?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-arbiter",
+    "topic": "Replication",
+    "question": "Arbiter क्या है और इसकी सलाह क्यों नहीं दी जाती?",
+    "answer": "**Arbiter** एक ऐसा member है जो **elections में vote करता है लेकिन कोई data नहीं रखता**। Primary-secondary-arbiter set में आपके data की सिर्फ़ **दो copies** होती हैं: अगर secondary fail हो जाए, तो `w: 'majority'` writes acknowledge नहीं हो सकते और block या time out होते हैं, और ऐसे setups में default write concern `w: 1` पर आ सकता है, जिससे rollback का जोखिम लौट आता है। इससे primary पर cache pressure भी बन सकता है। तीसरा data-bearing member लगभग हमेशा बेहतर विकल्प है।",
+    "followUps": [
+      "Priority 0, hidden और delayed members क्या होते हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-member-types",
+    "topic": "Replication",
+    "question": "Priority 0, hidden और delayed members किस काम आते हैं?",
+    "answer": "**Priority 0** member replicate करता है और vote देता है लेकिन **कभी primary नहीं बन सकता**, जो कमज़ोर machine या दूर के data centre के लिए काम का है। **Hidden** member priority 0 होता है और **application reads को दिखता नहीं**, जो dedicated reporting या backups के लिए अच्छा है। **Delayed** member hidden होता है और बदलाव एक तय समय देर से लागू करता है (`secondaryDelaySecs`), जिससे आपको गलती से हुए `drop` जैसी गलतियों से उबरने का समय मिलता है।",
+    "followUps": [
+      "क्या delayed member backups की जगह ले सकता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-stale-reads-scenario",
+    "topic": "Replication",
+    "question": "Scenario: load घटाने के लिए आपने readPreference को secondaryPreferred कर दिया, अब users बताते हैं कि उनका updated shipping address कभी-कभी पुरानी value दिखाता है। क्या हो रहा है और आप इसे कैसे ठीक करेंगे?",
+    "answer": "Replication **asynchronous** है, इसलिए secondaries primary से पीछे रहते हैं: write primary पर गया और अगला read ऐसे secondary पर पहुँचा जिसने उसे अभी लागू नहीं किया था, यही **stale read** है। इसे ठीक करने के लिए user-facing, अभी-अभी लिखा गया data **primary** से पढ़ें, या `w: 'majority'` और read concern `majority` के साथ **causally consistent session** इस्तेमाल करें, ताकि उस session के reads user के अपने writes का इंतज़ार करें। `secondaryPreferred` सिर्फ़ उन reads के लिए रखें जो staleness झेल सकते हैं, जैसे reports, और `rs.printSecondaryReplicationInfo()` से replication lag monitor करें।",
+    "explanation": "Premise पर भी सवाल उठाइए: secondaries भी हर write लागू करते हैं, इसलिए reads उन पर ले जाना सिर्फ़ read-heavy load में मदद करता है। अगर primary overloaded है, तो पहले indexes और slow queries check करें।",
+    "followUps": [
+      "Replication lag अचानक क्यों बढ़ता है?",
+      "maxStalenessSeconds क्या करता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-replication-not-backup",
+    "topic": "Replication",
+    "question": "क्या replication एक backup है? यह sharding से कैसे अलग है?",
+    "answer": "नहीं। Replication **हर** बदलाव copy करता है, गलतियों समेत: एक गलत `deleteMany` milliseconds में सभी members तक replicate हो जाता है। यह **server failure** से बचाता है, जबकि backups point-in-time copies के ज़रिए **गलत data बदलावों और disasters** से बचाते हैं। Sharding फिर से अलग है: यह capacity और writes scale करने के लिए **अलग-अलग** data को machines में बाँटता है। Production में तीनों इस्तेमाल होते हैं: हर shard एक replica set है, और cluster का backup होता है।",
+    "followUps": [
+      "Delayed member कैसे मदद करता है?"
+    ]
+  }
+]

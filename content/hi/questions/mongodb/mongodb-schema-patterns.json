@@ -1,0 +1,92 @@
+[
+  {
+    "slug": "mongodb-schema-patterns-computed",
+    "topic": "Schema design patterns",
+    "question": "Computed pattern क्या है? एक उदाहरण दीजिए।",
+    "answer": "**Computed pattern** किसी value को हर read पर compute करने की जगह **write पर** पहले से calculate करके store कर लेता है। उदाहरण: हर product `ratingCount` और `ratingSum` (या `ratingAvg`) store करता है, जो review जुड़ने पर `$inc` से update होते हैं, ताकि product page को हर view पर हज़ारों reviews aggregate न करने पड़ें। ये तब फ़ायदेमंद है जब reads की गिनती writes से बहुत ज़्यादा हो; इसकी cost है writes पर extra काम और drift का ख़तरा, अगर कोई write path इसे update करना भूल जाए।",
+    "followUps": [
+      "Computed field में drift का पता कैसे लगाएँगे और उसे कैसे ठीक करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-subset",
+    "topic": "Schema design patterns",
+    "question": "Subset pattern क्या है और 'product page पर latest 10 reviews' को आप कैसे implement करेंगे?",
+    "answer": "**Subset pattern** किसी बड़े related set का सिर्फ़ **अक्सर इस्तेमाल होने वाला हिस्सा** embed करता है, जबकि पूरा set अपनी collection में रहता है। सारे reviews `productId` के साथ `reviews` में जाते हैं; product `recentReviews` रखता है, जिसे `$push` के साथ `$each`, `$position: 0` और `$slice: 10` इस्तेमाल करके 10 पर cap किया जाता है। Product page एक read में बनता है, और \"सारे reviews देखें\" `{ productId: 1, createdAt: -1 }` index के साथ `reviews` collection में page करता है।",
+    "explanation": "```js\ndb.products.updateOne({ _id: pid }, {\n  $push: { recentReviews: { $each: [review], $position: 0, $slice: 10 } }\n})\n```\nCost: हर review पर दो writes, और अगर review subset में है तो edits या deletes को embedded copy भी update करनी होगी।",
+    "followUps": [
+      "क्या इन दो writes के लिए transaction चाहिए?",
+      "ये extended reference pattern से कैसे अलग है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-bucket-vs-timeseries",
+    "topic": "Schema design patterns",
+    "question": "Bucket pattern समझाइए। क्या आज भी आप इसे हाथ से बनाएँगे?",
+    "answer": "**Bucket pattern** बहुत सारे छोटे time-based records को हर time window के एक document में group करता है (जैसे हर product का हर घंटे एक document, जिसमें उस घंटे के page views हों), और एक **size cap** के साथ ताकि buckets bounded रहें। इससे documents और index entries की गिनती घटती है और range reads सस्ते हो जाते हैं। समय के साथ आने वाले सीधे-सादे measurements के लिए मैं इसकी जगह **time series collection** इस्तेमाल करूँगा: MongoDB bucketing अंदर ही अंदर करता है, compression के साथ, और आप हर event का एक document insert करते हैं।",
+    "explanation": "```js\ndb.createCollection(\"productViews\", {\n  timeseries: { timeField: \"at\", metaField: \"productId\", granularity: \"minutes\" }\n})\n```\nहाथ से बनाए buckets तब भी समझदारी हैं जब आपको custom per-bucket fields या ऐसी update semantics चाहिए जो time series collections में fit नहीं बैठतीं।",
+    "followUps": [
+      "Bucket को size cap की ज़रूरत क्यों है?",
+      "metaField किस काम आता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-extended-reference",
+    "topic": "Schema design patterns",
+    "question": "Extended reference pattern क्या है, और इसके risks क्या हैं?",
+    "answer": "आप reference (`customer._id`) रखते हैं, **साथ में उन कुछ fields की copy जो आप हमेशा दिखाते हैं**, जैसे order में customer का नाम और shipping address। इससे hot path पर एक `$lookup` हट जाता है, और orders के लिए ये copy असल में सही snapshot है। Risk है **stale duplicates**: सिर्फ़ वो fields copy करें जो कभी-कभार बदलते हैं या जिन्हें freeze रहना चाहिए, और अगर उन्हें sync रहना है तो एक plan (background update) रखें।",
+    "followUps": [
+      "User के कौन-से fields आप orders में कभी copy नहीं करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-outlier",
+    "topic": "Schema design patterns",
+    "question": "Scenario: आपके 99.9% products के 500 से कम reviews हैं, लेकिन कुछ viral products के लाखों हैं और उनके documents 16 MB के क़रीब पहुँच रहे हैं। सब कुछ redesign किए बिना इसे कैसे ठीक करेंगे?",
+    "answer": "**Outlier pattern** लगाइए: common case के लिए normal design रखें, और दुर्लभ बहुत बड़े documents को **flag** करें (`hasOverflow: true`) ताकि उनका extra data **overflow documents** में चला जाए (जैसे `productId` और `page` से keyed 500 review IDs के pages)। Extra lookups की cost सिर्फ़ flagged products देते हैं, और app flag के आधार पर branch करती है। अगर पता चले कि outliers दुर्लभ नहीं हैं, तो base design ही ग़लत है और मैं reviews को पूरी तरह उनकी अपनी collection में, child-to-parent references के साथ, ले जाऊँगा।",
+    "explanation": "इसे **computed pattern** (`ratingAvg`, `ratingCount`) और **subset pattern** (latest 10 reviews embedded) के साथ मिलाइए, ताकि viral products के लिए भी product page एक single read बना रहे।",
+    "followUps": [
+      "Extra code path की आपको क्या cost चुकानी पड़ती है?",
+      "Outliers के 16 MB तक पहुँचने से पहले उनका पता कैसे लगाएँगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-polymorphic-attribute",
+    "topic": "Schema design patterns",
+    "question": "अलग-अलग types के products (books, laptops, T-shirts) के fields अलग-अलग हैं। इन्हें आप कैसे model और search करेंगे?",
+    "answer": "**Polymorphic pattern** इस्तेमाल करें: shared fields (`name`, `price`) और एक **`type` discriminator** वाली एक `products` collection, ताकि cross-type search और shared indexes काम करते रहें (Mongoose discriminators यही implement करते हैं)। बहुत सारे type-specific, searchable specs के लिए **attribute pattern** जोड़ें: `attrs: [{ k, v }]`, जिस पर `attrs.k` और `attrs.v` का एक compound index हो, और `$elemMatch` से query करें; या एक `specs` sub-document रखें जिस पर **wildcard index** हो।",
+    "followUps": [
+      "Attribute pattern के लिए $elemMatch ज़रूरी क्यों है?",
+      "अलग collections कब बेहतर होंगी?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-schema-versioning",
+    "topic": "Schema design patterns",
+    "question": "50-million-document वाली collection में documents का shape बिना downtime के कैसे बदलेंगे?",
+    "answer": "**Schema versioning pattern** इस्तेमाल करें: एक `schemaVersion` field जोड़ें, ऐसा code deploy करें जो पुराने और नए दोनों shapes **पढ़ता** है और **सिर्फ़ नया** shape लिखता है, फिर बाकी documents को धीरे-धीरे migrate करें (access पर या throttled background job से)। जब कोई पुराना version न बचे, तो पुराना read path हटा दें। ये एक risky big-bang migration की जगह एक safe, incremental migration ले आता है।",
+    "followUps": [
+      "कितने documents अब भी पुराने version पर हैं, ये कैसे पता करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-tree-categories",
+    "topic": "Schema design patterns",
+    "question": "MongoDB में product category hierarchy को आप कैसे model करेंगे? Options की तुलना कीजिए।",
+    "answer": "चार tree patterns हैं: **parent references** (updates आसान, लेकिन descendants के लिए `$graphLookup` चाहिए), **child references** (children list करना आसान, ऊपर जाना मुश्किल), **array of ancestors** (हर node अपनी पूरी ancestor list store करता है, इसलिए breadcrumbs और \"X के नीचे सब कुछ\" एक indexed query है) और **materialized paths** (एक path string, जिसे anchored prefix regex से query किया जाता है)। E-commerce के लिए मैं **array of ancestors plus parent** चुनूँगा: categories लगातार पढ़ी जाती हैं और कभी-कभार restructure होती हैं, और cost ये है कि subtree move होने पर descendants दोबारा लिखने पड़ते हैं।",
+    "explanation": "```js\n{ _id: \"Laptops\", parent: \"Computers\", ancestors: [\"Electronics\", \"Computers\"] }\ndb.categories.createIndex({ ancestors: 1 })\ndb.categories.find({ ancestors: \"Computers\" })   // whole subtree\n```",
+    "followUps": [
+      "जब आप 'Computers' को एक नए parent के नीचे move करते हैं तो क्या होता है?",
+      "$graphLookup कैसे काम करता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-patterns-approximation",
+    "topic": "Schema design patterns",
+    "question": "Approximation pattern क्या है और इससे कब बचना ज़रूरी है?",
+    "answer": "**Approximation pattern** hot counters पर writes घटाता है जब exact number मायने नहीं रखता: जैसे 1/100 की probability से product का `viewCount` 100 से increment करें। Writes लगभग 100× घट जाते हैं और number statistically क़रीब रहता है। इसे उन values के लिए कभी इस्तेमाल न करें जो exact होनी चाहिए: stock, पैसा, billing या order counts।",
+    "followUps": [
+      "किसी hot counter पर write load घटाने के और कौन-से तरीके हैं?"
+    ]
+  }
+]

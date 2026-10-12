@@ -1,0 +1,70 @@
+[
+  {
+    "slug": "postgres-architecture-query-lifecycle",
+    "topic": "PostgreSQL architecture",
+    "question": "जब आपका app एक SQL query भेजता है, तब PostgreSQL के अंदर क्या होता है?",
+    "answer": "Connection को उसका अपना **backend process** serve करता है। वह process query को चार stages से गुज़ारता है: **parser** syntax check करता है और table व column names resolve करता है, **rewriter** views को expand करता है और rules लगाता है, **planner** table statistics की मदद से अलग-अलग plans की cost का अंदाज़ा लगाकर सबसे सस्ता चुनता है, और **executor** उस plan को चलाता है, **shared buffers** के ज़रिए pages पढ़ता है और rows वापस stream करता है।",
+    "explanation": "`EXPLAIN` आपको planner का output दिखाता है। Syntax error या अनजान column parser stage में ही fail होता है; missing index की वजह से धीमी query planner/executor की कहानी है।",
+    "followUps": ["Views कैसे implement होते हैं?", "Planner के row estimates कहाँ से आते हैं?"]
+  },
+  {
+    "slug": "postgres-architecture-process-per-connection",
+    "topic": "PostgreSQL architecture",
+    "question": "PostgreSQL connections को महँगा क्यों माना जाता है?",
+    "answer": "PostgreSQL **process per connection** इस्तेमाल करता है: postmaster हर client के लिए एक नया OS process शुरू करता है। इसे बनाने में समय लगता है (process start, authentication, अक्सर TLS, cache warm-up), हर process अपनी अलग memory लेता है, और सैकड़ों active processes CPU और locks के लिए आपस में होड़ करते हैं। इसीलिए `max_connections` छोटा होता है (default 100) और apps को हर request पर नया connection बनाने की जगह **pool** के ज़रिए connections reuse करने चाहिए।",
+    "followUps": ["PgBouncer क्या है?", "आप Node.js pg pool का size कैसे तय करेंगे?"]
+  },
+  {
+    "slug": "postgres-architecture-database-vs-schema",
+    "topic": "PostgreSQL architecture",
+    "question": "PostgreSQL में database और schema में क्या अंतर है?",
+    "answer": "एक **cluster** (एक server instance) में कई **databases** होते हैं; हर database में **schemas** होते हैं, जो tables, views और functions के लिए namespaces हैं। एक connection **एक database** से बँधा होता है, इसलिए `postgres_fdw` जैसे extensions के बिना आप databases के पार join नहीं कर सकते, लेकिन schemas के पार आराम से query कर सकते हैं (`analytics.daily_revenue`)। Roles पूरे cluster में shared होते हैं, और बिना qualifier वाले names `search_path` से resolve होते हैं।",
+    "followUps": ["search_path क्या है?", "आप अलग databases की जगह अलग schemas कब इस्तेमाल करेंगे?"]
+  },
+  {
+    "slug": "postgres-architecture-wal-durability",
+    "topic": "Write-ahead log",
+    "question": "Write-ahead log (WAL) क्या है और यह commits को durable कैसे बनाता है?",
+    "answer": "WAL हर change का एक append-only journal है। Change **shared buffers** में page पर लागू होता है और एक WAL record में लिखा जाता है; `COMMIT` पर PostgreSQL को सिर्फ़ commit record तक **WAL flush** करना होता है, जो एक सस्ता sequential write है। बदले हुए table pages बाद में background writer और checkpointer लिखते हैं। अगर server crash हो जाए, तो **crash recovery आख़िरी checkpoint से WAL replay करती है**, इसलिए हर committed change वापस आ जाता है।",
+    "explanation": "इसीलिए commits तेज़ होते हैं: कई random page writes की जगह एक sequential fsync। यही WAL stream replicas replay करते हैं और point-in-time recovery भी इसी का इस्तेमाल करती है।",
+    "followUps": ["Checkpoint क्या है?", "synchronous_commit = off क्या बदलता है?", "Full-page writes क्या हैं?"]
+  },
+  {
+    "slug": "postgres-architecture-checkpoints",
+    "topic": "Write-ahead log",
+    "question": "Checkpoint क्या है, और यह कितनी बार हो, इसमें क्या trade-off है?",
+    "answer": "**Checkpoint** shared buffers के सारे dirty pages data files में लिखता है और एक point दर्ज करता है जहाँ से crash recovery शुरू हो सकती है; उससे पुराना WAL recycle हो सकता है। यह हर `checkpoint_timeout` (default 5 min) पर चलता है या तब जब `max_wal_size` जितना WAL जमा हो जाए। **बार-बार** checkpoints का मतलब है तेज़ recovery लेकिन ज़्यादा I/O और WAL में ज़्यादा full-page images; **कभी-कभार** checkpoints का मतलब है कम I/O लेकिन crash के बाद लंबी recovery।",
+    "followUps": ["Log message 'checkpoints are occurring too frequently' आपको क्या बताता है?", "checkpoint_completion_target किसलिए है?"]
+  },
+  {
+    "slug": "postgres-architecture-shared-buffers",
+    "topic": "Memory",
+    "question": "Shared buffers क्या हैं, और shared_buffers को RAM का ज़्यादातर हिस्सा क्यों नहीं दिया जाता?",
+    "answer": "**Shared buffers** PostgreSQL का 8 KB data और index pages का cache है, जिसे सारे backends share करते हैं। PostgreSQL इसके नीचे **OS page cache** पर भी भरोसा करता है (double buffering), और हर backend को sorts और hashes के लिए private memory (`work_mem`) चाहिए। इसलिए `shared_buffers` के लिए आम शुरुआती point लगभग **RAM का 25%** है; फिर `effective_cache_size` planner को बताता है कि कुल कितनी caching की उम्मीद रखे।",
+    "explanation": "`EXPLAIN (ANALYZE, BUFFERS)` `shared hit` (shared buffers में मिला) vs `read` (OS से माँगा गया, जो फिर भी disk की जगह OS cache से आ सकता है) दिखाता है।",
+    "followUps": ["work_mem क्या है और इसे बहुत ऊँचा set करना ख़तरनाक क्यों है?", "Buffers: shared read का क्या मतलब है?"]
+  },
+  {
+    "slug": "postgres-architecture-toast",
+    "topic": "Storage",
+    "question": "PostgreSQL बहुत बड़ी text या jsonb value वाली row को कैसे store करता है?",
+    "answer": "Rows 8 KB heap pages में रहती हैं और एक row कई pages में नहीं फैल सकती। जब कोई row लगभग **2 KB** से बड़ी होती है, PostgreSQL **TOAST** इस्तेमाल करता है: वह बड़ी values को compress करता है और अगर फिर भी बहुत बड़ी हों, तो उन्हें chunks में table की TOAST table में **out of line** भेज देता है, और main row में एक pointer छोड़ देता है। एक field 1 GB तक हो सकता है। जो queries उन columns को select नहीं करतीं वे तेज़ रहती हैं, लेकिन `SELECT *` उन्हें fetch और decompress करने की क़ीमत चुकाता है।",
+    "followUps": ["ctid क्या है?", "बड़े jsonb document को update करना महँगा क्यों हो सकता है?"]
+  },
+  {
+    "slug": "postgres-architecture-crash-after-commit",
+    "topic": "Write-ahead log",
+    "question": "आपके app को COMMIT return होने के एक millisecond बाद server की बिजली चली जाती है। बदला हुआ table page कभी disk पर नहीं लिखा गया। क्या order खो गया?",
+    "answer": "नहीं। Default `synchronous_commit = on` के साथ COMMIT तभी return होता है जब **WAL record durable storage पर flush** हो चुका हो। Restart पर PostgreSQL आख़िरी checkpoint से **crash recovery** चलाता है और WAL को **replay** करता है, यानी page पर change दोबारा करता है। अपवाद वे settings हैं जो यह वादा तोड़ती हैं: `synchronous_commit = off` आख़िरी एक सेकंड से भी कम के commits खो सकता है (बिना corruption के), और `fsync = off` या flush के बारे में झूठ बोलने वाली disk database को corrupt कर सकती है।",
+    "explanation": "Interview के लिए सोने जैसी बात: **हाल के commits खोना** (synchronous_commit off, जान-बूझकर लिया गया trade-off) और **corruption** (fsync off, production में कभी स्वीकार्य नहीं) में फ़र्क़ कीजिए। आधे लिखे 8 KB page से बने torn pages को हर checkpoint के बाद WAL में लिखी full-page images संभालती हैं।",
+    "followUps": ["आप synchronous_commit = off कब स्वीकार करेंगे?", "Replicas उसी WAL का इस्तेमाल कैसे करते हैं?"]
+  },
+  {
+    "slug": "postgres-architecture-too-many-clients",
+    "topic": "PostgreSQL architecture",
+    "question": "अपनी Node.js API को 3 से 15 pods तक scale करने के बाद PostgreSQL 'sorry, too many clients already' लौटाने लगता है। क्या हो रहा है और आप इसे कैसे ठीक करेंगे?",
+    "answer": "हर pod का अपना pool है, इसलिए कुल connections = pods × pool size; 15 pods × 20 = 300, लेकिन `max_connections` 100 है, और हर connection एक पूरा backend process है। `max_connections` को बहुत बढ़ा देने से समस्या बस memory और CPU contention पर खिसक जाती है। Fix: हर pod के pools छोटे कीजिए, app और database के बीच PgBouncer (transaction mode) जैसा **connection pooler** लगाइए, transactions छोटे रखिए ताकि connections जल्दी लौटें, और idle-in-transaction sessions के लिए `pg_stat_activity` monitor कीजिए।",
+    "explanation": "एक काम का mental model: database parallel में उतना ही काम कर सकता है जितने उसके पास CPU cores और disk bandwidth हैं। कुछ दर्जन busy connections आमतौर पर सैकड़ों ज़्यादातर idle connections से बेहतर होते हैं।",
+    "followUps": ["PgBouncer transaction mode में क्या टूटता है?", "'idle in transaction' क्या है और यह नुक़सानदेह क्यों है?"]
+  }
+]

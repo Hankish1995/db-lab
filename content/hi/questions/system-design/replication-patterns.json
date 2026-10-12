@@ -1,0 +1,62 @@
+[
+  {
+    "slug": "replication-patterns-why-replicate",
+    "topic": "Replication",
+    "question": "Databases data को replicate क्यों करते हैं, और replication क्या solve नहीं करता?",
+    "answer": "Replication **एक ही data की copies** कई machines पर रखता है, ताकि **high availability** (failover), **read scaling**, **कम latency** (users के पास copies) और **durability** मिले। Single-leader setup में यह **writes** को scale नहीं करता, क्योंकि हर replica को हर write apply करना पड़ता है; उसके लिए sharding चाहिए। यह **backup भी नहीं है**: एक गलत `DELETE` तुरंत हर copy पर replicate हो जाता है।",
+    "followUps": ["Replication, sharding से कैसे अलग है?", "Replication lag क्या है?"]
+  },
+  {
+    "slug": "replication-patterns-sync-vs-async",
+    "topic": "Replication",
+    "question": "Synchronous और asynchronous replication में क्या फ़र्क है?",
+    "answer": "**Synchronous** replication में leader write acknowledge करने से पहले किसी follower के confirm करने का इंतज़ार करता है, इसलिए leader crash होने पर भी write बचा रहता है, पर हर write धीमा होता है और अगर वो follower down है तो अटक जाता है। **Asynchronous** replication में leader तुरंत acknowledge कर देता है: तेज़ और available, पर अगर leader मर जाए तो जो writes अभी copy नहीं हुए वो **खो जाते हैं**। आम बीच का रास्ता है एक follower या **majority** का इंतज़ार करना, जैसे MongoDB `w: 'majority'` या PostgreSQL `synchronous_standby_names` with `ANY 1 (...)`।",
+    "followUps": ["इसका PACELC से क्या संबंध है?", "E-commerce app में आप कौन से writes synchronous रखेंगे?"]
+  },
+  {
+    "slug": "replication-patterns-three-architectures",
+    "topic": "Replication",
+    "question": "Single-leader, multi-leader और leaderless replication की तुलना करें।",
+    "answer": "**Single-leader**: एक node writes accept करता है और उन्हें followers को stream करता है; कोई write conflicts नहीं, आसान, पर एक ही writer और failover के समय रुकावट। **Multi-leader**: हर region में एक leader local writes accept करता है और वो asynchronously sync होते हैं; कम write latency और regions की आज़ादी, पर **conflicts** को resolve करना पड़ता है। **Leaderless** (Dynamo-style, जैसे Cassandra): clients **quorums** इस्तेमाल करके कई replicas पर लिखते और पढ़ते हैं; बहुत available, पर इसे भी conflict handling चाहिए और default रूप से eventual consistency देता है।",
+    "followUps": ["Checkout system के लिए आप कौन सा चुनेंगे?", "Quorum क्या होता है?"]
+  },
+  {
+    "slug": "replication-patterns-quorum",
+    "topic": "Replication",
+    "question": "Leaderless system में W + R > N का क्या मतलब है, और क्या यह strong consistency की guarantee देता है?",
+    "answer": "**N** replicas की संख्या है, **W** यह कि कितनों को write acknowledge करना होगा, **R** यह कि read पर कितनों से पूछा जाता है। अगर **W + R > N** है, तो हर read set हर write set के साथ कम से कम एक node में overlap करता है, इसलिए read आमतौर पर latest successful write देख लेता है (जैसे N=3, W=2, R=2)। यह linearizability की guarantee **नहीं** है: sloppy quorums, concurrent writes, आंशिक रूप से fail हुए writes और clock-based conflict resolution अब भी stale या चौंकाने वाले results दे सकते हैं।",
+    "explanation": "Replicas **read repair** (reads के दौरान दिखे stale replicas को ठीक करना), **anti-entropy** (background में तुलना, अक्सर Merkle trees से) और **hinted handoff** (down replica के लिए कोई दूसरा node writes संभाल कर रखता है) से catch up करते हैं।",
+    "followUps": ["Sloppy quorum क्या है?", "Write-heavy workload के लिए आप W और R को कैसे tune करेंगे?"]
+  },
+  {
+    "slug": "replication-patterns-lww-conflicts",
+    "topic": "Replication",
+    "question": "Multi-leader replication में write conflicts कैसे resolve होते हैं, और last-write-wins में क्या गड़बड़ है?",
+    "answer": "विकल्प: **last-write-wins** (सबसे बड़ा timestamp जीतता है), application-level **merge** (siblings रखें और code में या user से resolve करवाएँ), **CRDTs** (counters और sets जैसे data types जो deterministically merge होते हैं), या हर record के writes को एक home leader पर route करके **conflicts से बचना**। LWW हारने वाले write को **चुपचाप फेंक देता है**, और क्योंकि अलग-अलग machines की clocks drift करती हैं, \"last\" write असल में सबसे नया न भी हो। Orders या payments के लिए यह मंज़ूर नहीं है।",
+    "followUps": ["ऐसे data का उदाहरण दें जो CRDT में fit हो।", "आप conflicts से पूरी तरह कैसे बचेंगे?"]
+  },
+  {
+    "slug": "replication-patterns-read-your-writes",
+    "topic": "Replication",
+    "question": "एक user अपना shipping address update करता है, refresh करता है, और उसे पुराना address दिखता है। क्यों, और आप इसे कैसे ठीक करेंगे?",
+    "answer": "Write leader पर गया पर read एक **पिछड़े हुए replica** पर पहुँचा: यह **read-your-writes** consistency का उल्लंघन है। Fixes: user जो data edit कर सकता है उसे **leader** से पढ़ें (कम से कम write के बाद थोड़ी देर तक), write की log position track करें और सिर्फ़ उसी replica से पढ़ें जो वहाँ तक **catch up** कर चुका हो (MongoDB causally consistent sessions यही करते हैं), या जब तक \"recently wrote\" flag set है, उस user के reads leader पर route करें।",
+    "explanation": "जुड़ी हुई anomalies: **monotonic reads** (लगातार reads अलग-अलग replicas पर जाएँ तो order status Shipped से वापस Processing हो जाता है; हर user के लिए sticky replica से ठीक करें) और **consistent prefix** (answer अपने question से पहले दिख जाता है; causally related writes को same partition में रखकर ठीक करें)।",
+    "followUps": ["Monotonic reads क्या है?", "आप sticky replica routing कैसे implement करेंगे?"]
+  },
+  {
+    "slug": "replication-patterns-split-brain-fencing",
+    "topic": "Replication",
+    "question": "Split brain क्या है, और majority elections व fencing tokens इसे कैसे रोकते हैं?",
+    "answer": "**Split brain** तब होता है जब दो nodes दोनों खुद को leader मानते हैं और writes accept करते हैं, जिससे histories अलग हो जाती हैं। **Majority elections** यह पक्का करते हैं कि partition की सिर्फ़ वही तरफ़ leader चुन सके जिसके पास आधे से ज़्यादा voters हों, और जो leader majority खो देता है वो हट जाता है। **Fencing tokens** बचा हुआ gap भरते हैं: हर नए leader को एक strictly बढ़ता हुआ term या epoch मिलता है, और storage पुराना token लेकर आने वाले writes reject कर देता है, इसलिए रुका हुआ पुराना leader जागकर data खराब नहीं कर सकता।",
+    "explanation": "```text\nold leader (token 33) pauses for a long GC\nnew leader elected → token 34 → writes accepted\nold leader wakes → writes with 33 → rejected\n```",
+    "followUps": ["Replica sets में voting members की संख्या odd क्यों रखी जाती है?", "STONITH क्या है?"]
+  },
+  {
+    "slug": "replication-patterns-failover-lost-writes",
+    "topic": "Replication",
+    "question": "Scenario: आपका async-replicated primary crash हो गया और एक replica को promote किया गया। Customers बता रहे हैं कि confirmed orders अब मौजूद ही नहीं हैं। क्या हुआ, और आप इसे कैसे रोकेंगे?",
+    "answer": "**Asynchronous** replication में पुराने primary ने उन orders को किसी replica तक भेजने से पहले ही acknowledge कर दिया था। Promote हुए replica के पास वो कभी थे ही नहीं, और जब पुराना primary वापस जुड़ता है, तो उसके un-replicated writes नई history से टकराते हैं और discard या rollback हो जाते हैं। इसे रोकने के लिए critical writes (orders, payments) के लिए **majority / synchronous acknowledgement** ज़रूरी करें, lag monitor करें, और downstream effects (emails, payment captures, cached IDs) को सिर्फ़ durably committed data पर निर्भर बनाएँ, जैसे outbox के ज़रिए।",
+    "explanation": "यह PACELC का latency-vs-durability trade-off है, असल ज़िंदगी में। MongoDB rollback हुआ data rollback files में लिखता है; `w: 'majority'` के साथ acknowledged writes failover में बचे रहते हैं।",
+    "followUps": ["Majority writes की latency कीमत क्या है?", "आप failover timeout कैसे चुनेंगे?"]
+  }
+]

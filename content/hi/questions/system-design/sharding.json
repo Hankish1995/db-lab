@@ -1,0 +1,45 @@
+[
+  {
+    "slug": "what-is-sharding",
+    "topic": "Sharding",
+    "question": "Sharding क्या है और हमें इसकी ज़रूरत क्यों है?",
+    "answer": "Sharding data का कई servers में **horizontal partitioning** है। हर shard data का एक हिस्सा रखता है, जो एक **shard key** से तय होता है। हम इसे तब इस्तेमाल करते हैं जब एक server **data size** या **write throughput** नहीं संभाल पाता: यह लगातार बड़ी machine खरीदने के बजाय storage और writes को horizontally scale करता है।",
+    "followUps": ["यह replication से कैसे अलग है?", "आप कब shard नहीं करेंगे?"]
+  },
+  {
+    "slug": "choose-shard-key",
+    "topic": "Sharding",
+    "question": "आप एक अच्छी shard key कैसे चुनेंगे?",
+    "answer": "एक अच्छी shard key की **high cardinality** होती है, वो **reads और writes को बराबर** बाँटती है, और **ज़्यादातर queries** में मौजूद होती है ताकि वो scatter-gather के बजाय targeted हों। Ranged sharding के साथ **monotonically increasing** keys (timestamps, auto-increment IDs, ObjectId) से बचें, क्योंकि हर नया write एक ही shard पर जाता है। Hashed sharding या `{ customerId: 1, orderDate: 1 }` जैसी compound key इस्तेमाल करें।",
+    "explanation": "उदाहरण: `orders` को `createdAt` से shard करने पर हर नया order उस shard पर जाता है जिसके पास सबसे नई range है — एक **hot shard**। `customerId` (hashed) से shard करने पर writes फैल जाते हैं, और \"customer X के orders\" एक targeted query बनी रहती है।",
+    "followUps": ["Hot shard क्या है?", "अगर आप गलत shard key चुन लें तो क्या होता है?", "Ranged vs hashed sharding?"]
+  },
+  {
+    "slug": "sharding-vs-replication",
+    "topic": "Sharding",
+    "question": "Sharding और replication में क्या फ़र्क है?",
+    "answer": "**Sharding** *अलग-अलग* data को machines में बाँटती है, **scale** के लिए। **Replication** *एक ही* data को machines पर copy करता है, **availability** और read scaling के लिए। Production clusters दोनों इस्तेमाल करते हैं: हर shard खुद एक replica set होता है।",
+    "followUps": ["और partitioning इन दोनों से कैसे अलग है?"]
+  },
+  {
+    "slug": "scatter-gather-query",
+    "topic": "Sharding",
+    "question": "Sharded cluster में scatter-gather query क्या है?",
+    "answer": "ऐसी query जिसमें **shard key नहीं होती**, इसलिए router (`mongos`) नहीं बता सकता कि data किस shard पर है। वो query **सारे shards** पर भेजता है और results merge करता है, इसलिए जैसे-जैसे आप shards जोड़ते हैं, यह धीमी होती जाती है। जिन queries में shard key होती है वो एक shard पर **targeted** होती हैं।",
+    "followUps": ["किसी बार-बार चलने वाली query के लिए आप scatter-gather से कैसे बचेंगे?"]
+  },
+  {
+    "slug": "ranged-vs-hashed-sharding",
+    "topic": "Sharding",
+    "question": "Ranged vs hashed sharding: आप हर एक को कब इस्तेमाल करेंगे?",
+    "answer": "**Ranged** पास-पास की key values को साथ रखता है, इसलिए **range queries** targeted होती हैं, पर बढ़ती keys एक **hot shard** बनाती हैं। **Hashed** values को बराबर बिखेरता है, इसलिए **writes balanced रहते हैं**, पर range queries scatter-gather बन जाती हैं। Write-heavy keys के लिए hashed इस्तेमाल करें जिन्हें सिर्फ़ exact value से ढूँढा जाता है; ranged तब इस्तेमाल करें जब आप ranges से query करते हैं और key monotonically increasing नहीं है।",
+    "followUps": ["क्या आप बाद में shard key बदल सकते हैं?"]
+  },
+  {
+    "slug": "sharding-problems",
+    "topic": "Sharding",
+    "question": "Sharding कौन सी समस्याएँ लाती है?",
+    "answer": "Operational complexity (config servers, routers, एक balancer), **scatter-gather** queries, धीमे **cross-shard transactions** और joins (`$lookup`), **unique indexes** जिनमें shard key शामिल होनी ज़रूरी है, **jumbo chunks** जब एक key value बहुत बड़ी हो, और बहुत महँगी **resharding** अगर shard key गलत चुनी गई हो।",
+    "followUps": ["Sharding से पहले आप क्या-क्या आज़माएँगे?"]
+  }
+]

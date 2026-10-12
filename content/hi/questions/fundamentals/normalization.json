@@ -1,0 +1,68 @@
+[
+  {
+    "slug": "normalization-what-and-why",
+    "topic": "Normalization",
+    "question": "Normalization क्या है और हम इसे क्यों करते हैं?",
+    "answer": "Normalization tables को इस तरह organize करना है कि **हर fact ठीक एक जगह store हो**, और यह keys और functional dependencies के आधार पर होता है। यह **insert, update और delete anomalies** को रोकता है, जिनमें duplicate data out of sync हो जाता है या खो जाता है। उदाहरण: अगर customer का email हर order row पर store है, तो email बदलने पर कई rows बदलनी पड़ेंगी, और वे rows आपस में contradict कर सकती हैं।",
+    "followUps": ["तीन anomalies कौन-सी हैं?", "आप आमतौर पर किस normal form तक normalize करते हैं?"]
+  },
+  {
+    "slug": "normalization-three-anomalies",
+    "topic": "Normalization",
+    "question": "Insert, update और delete anomalies को एक उदाहरण से समझाइए।",
+    "answer": "मान लीजिए एक चौड़ी `orders` table में customer और product की details भी हैं: **insert anomaly** यह है कि जब तक कोई नया product order न करे, आप उसे जोड़ ही नहीं सकते; **update anomaly** यह है कि customer का email 40 में से 39 rows में बदला गया और data खुद से contradict करने लगा; **delete anomaly** यह है कि किसी product का इकलौता order delete करने पर उस product की price भी साथ में खो गई। तीनों इसी से आती हैं कि असंबंधित facts एक row में, या एक fact कई rows में store किया गया।",
+    "followUps": ["customers, products, orders और order_items में split करने से हर anomaly कैसे ठीक होती है?"]
+  },
+  {
+    "slug": "normalization-keys-natural-vs-surrogate",
+    "topic": "Keys",
+    "question": "Candidate key, primary key और surrogate key में क्या फ़र्क है? Primary key natural रखें या surrogate?",
+    "answer": "**Candidate key** columns का कोई भी minimal set है जो एक row को uniquely पहचानता है; **primary key** वह candidate key है जिसे आप main identifier के तौर पर चुनते हैं; **surrogate key** एक generated, बेमतलब ID है (identity column, UUID, MongoDB `_id`), जबकि **natural key** email या SKU जैसी होती है। मैं आमतौर पर surrogate primary key पसंद करता हूँ, क्योंकि natural keys बदल सकती हैं और तब हर foreign key को भी साथ में बदलना पड़ेगा, लेकिन फिर भी मैं **natural key पर UNIQUE constraint** लगाता हूँ ताकि duplicates मुमकिन ही न हों।",
+    "explanation": "```sql\nCREATE TABLE customers (\n  customer_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email text NOT NULL UNIQUE\n);\n```",
+    "followUps": ["Composite key क्या है? एक उदाहरण दीजिए।", "Random UUID primary keys से क्या समस्याएँ हो सकती हैं?"]
+  },
+  {
+    "slug": "normalization-functional-dependency",
+    "topic": "Normalization",
+    "question": "Functional dependency क्या है, और इसका normal forms से क्या संबंध है?",
+    "answer": "Functional dependency `X → Y` का मतलब है कि **X पता हो तो ठीक एक Y तय हो जाता है**, जैसे `customer_id → email`। Normal forms ऐसे नियम हैं जो बताते हैं कि किसी table में कौन-सी dependencies रह सकती हैं: 2NF यह मना करता है कि non-key columns composite key के **एक हिस्से** पर depend करें, 3NF यह मना करता है कि non-key columns **दूसरे non-key columns** पर depend करें, और BCNF कहता है कि **हर determinant एक candidate key हो**। जब कोई dependency नियम तोड़ती है, तो आप उसे ऐसी table में ले जाते हैं जिसकी key उसका determinant हो।",
+    "followUps": ["Transitive dependency क्या है?"]
+  },
+  {
+    "slug": "normalization-1nf-2nf-3nf",
+    "topic": "Normal forms",
+    "question": "1NF, 2NF और 3NF को एक e-commerce उदाहरण से समझाइए।",
+    "answer": "**1NF**: atomic values और कोई repeating groups नहीं, इसलिए `products = 'Mouse, Keyboard'` बदलकर हर order line की एक row बन जाता है, जिसकी key `(order_id, product_id)` है। **2NF**: कोई partial dependency नहीं, इसलिए `order_date` (जो सिर्फ़ `order_id` पर depend करता है) `orders` में चला जाता है और `product_name` (जो सिर्फ़ `product_id` पर depend करता है) `products` में। **3NF**: कोई transitive dependency नहीं, इसलिए `customer_email`, जो `order_id` पर नहीं बल्कि `customer_id` पर depend करता है, `customers` में चला जाता है। एक लाइन में: हर non-key column depends on the key, the whole key, and nothing but the key।",
+    "explanation": "Final schema: `customers(customer_id, name, email)`, `products(product_id, name, price)`, `orders(order_id, customer_id, order_date)`, `order_items(order_id, product_id, qty, unit_price)`।",
+    "followUps": ["क्या single-column primary key वाली table 2NF तोड़ सकती है?", "क्या order_items में unit_price 3NF का violation है?"]
+  },
+  {
+    "slug": "normalization-bcnf-vs-3nf",
+    "topic": "Normal forms",
+    "question": "BCNF, 3NF से कैसे अलग है? ऐसी table का उदाहरण दीजिए जो 3NF में हो लेकिन BCNF में नहीं।",
+    "answer": "BCNF कहता है कि **हर** dependency `X → Y` के लिए X एक super key हो। 3NF में एक loophole है: वह `X → Y` की इजाज़त देता है जब Y किसी candidate key का हिस्सा हो। उदाहरण: `seller_managers(seller_id, category, manager)`, जहाँ हर seller का हर category में एक manager है और हर manager एक ही category संभालता है। यहाँ `manager → category` लागू है लेकिन `manager` key नहीं है, इसलिए table 3NF में है पर BCNF में नहीं। इसे `managers(manager, category)` और `seller_managers(seller_id, manager)` में split करने से यह ठीक हो जाता है, लेकिन \"हर seller के लिए हर category में एक manager\" वाला नियम अब एक simple UNIQUE constraint से enforce नहीं हो सकता, इसीलिए practical target अक्सर 3NF होता है।",
+    "followUps": ["Dependency preservation का क्या मतलब है?", "Lossless decomposition क्या है?"]
+  },
+  {
+    "slug": "normalization-price-snapshot",
+    "topic": "Data modeling",
+    "question": "जब products में पहले से price है, तो क्या order_items में unit_price store करना normalization का violation है?",
+    "answer": "नहीं। `products.price` **current price** है; `order_items.unit_price` वह **price है जो customer ने असल में चुकाई**, यानी एक अलग, historical fact जो पूरी key `(order_id, product_id)` पर depend करता है। अगर आप सिर्फ़ `products.price` से join करते, तो कल price बदलते ही हर पुराना invoice चुपचाप बदल जाता। यही बात order के समय capture किए गए shipping addresses और tax rates पर भी लागू होती है।",
+    "followUps": ["Order पर और कौन-से fields snapshot करने चाहिए?"]
+  },
+  {
+    "slug": "normalization-when-to-denormalize",
+    "topic": "Denormalization",
+    "question": "Denormalization क्या है और आप इसे कब इस्तेमाल करेंगे?",
+    "answer": "Denormalization का मतलब है reads सस्ते करने के लिए **जानबूझकर data duplicate करना**, जैसे `products` पर `review_count` और `avg_rating` store करना, चौड़ी reporting tables या materialized views बनाना, या MongoDB documents में data embed करना ताकि एक fetch से पूरा page बन जाए। आप इसे तब इस्तेमाल करते हैं जब reads, writes से कहीं ज़्यादा हों और आपने एक असली read समस्या **measure** की हो जिसे indexes और caching हल नहीं कर पाए। इसकी कीमत यह है कि update anomalies वापस आ जाती हैं: हर copy को transactions, triggers या background jobs से sync में रखना पड़ता है।",
+    "followUps": ["Denormalized counter को आप sync में कैसे रखेंगे?", "'normalize until it hurts, denormalize until it works' का क्या मतलब है?"]
+  },
+  {
+    "slug": "normalization-scenario-product-page-slow",
+    "topic": "Denormalization",
+    "question": "Scenario: आपका product listing page हर product की average rating और review count दिखाता है, और reviews लाखों में पहुँचने के साथ यह धीमा हो रहा है। आप इसे कैसे ठीक करेंगे, और इसमें क्या risks हैं?",
+    "answer": "पहले `EXPLAIN` से confirm करें कि cost सच में `reviews` पर हर request में होने वाले aggregation की है, और check करें कि `reviews(product_id)` पर index है। अगर फिर भी बहुत धीमा है, तो **denormalize** करें: `products` पर `review_count` और `rating_sum` (या `avg_rating`) store करें और हर review insert, update या delete के **उसी transaction** में उन्हें update करें, या अगर थोड़े पुराने numbers चल सकते हैं तो किसी schedule पर materialized view refresh करें। Risks हैं: counters और असली reviews के बीच drift, extra write work, और popular products की rows पर contention, इसलिए मैं एक periodic reconciliation job भी जोड़ूँगा।",
+    "explanation": "```sql\nBEGIN;\nINSERT INTO reviews (product_id, customer_id, rating) VALUES (1, 7, 5);\nUPDATE products\nSET review_count = review_count + 1,\n    rating_sum   = rating_sum + 5\nWHERE product_id = 1;\nCOMMIT;\n```\nMongoDB में यही idea product document पर `$inc` है, और अगर review एक अलग document है तो इसे transaction के अंदर करें।",
+    "followUps": ["सिर्फ़ avg_rating की जगह rating_sum क्यों store करें?", "अगर किसी hot product पर हर मिनट हज़ारों reviews आ रहे हों तो आप उसे कैसे handle करेंगे?"]
+  }
+]

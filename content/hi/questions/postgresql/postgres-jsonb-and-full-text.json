@@ -1,0 +1,94 @@
+[
+  {
+    "slug": "postgres-jsonb-and-full-text-json-vs-jsonb",
+    "topic": "JSONB",
+    "question": "PostgreSQL में json और jsonb में क्या फ़र्क है?",
+    "answer": "`json` **बिल्कुल वही input text** store करता है, whitespace, key order और duplicate keys समेत, और हर access पर उसे दोबारा parse करता है। `jsonb` एक **parsed binary** रूप store करता है: duplicate keys हटा दी जाती हैं (आख़िरी वाली जीतती है), key order नहीं बचता, inserts थोड़े धीमे होते हैं, पर queries कहीं तेज़ होती हैं और ये **GIN indexes** और `@>` व `?` जैसे operators support करता है। Default रूप से jsonb इस्तेमाल करें; json सिर्फ़ तब, जब payload को byte-for-byte रखना हो।",
+    "followUps": [
+      "jsonb में duplicate keys का क्या होता है?",
+      "किन operators के लिए jsonb चाहिए?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-operators",
+    "topic": "JSONB",
+    "question": "jsonb column पर ->, ->>, @> और ? operators क्या करते हैं?",
+    "answer": "`->` field को **jsonb** के रूप में लौटाता है (`attributes -> 'brand'` से `\"Pixelco\"` मिलता है), `->>` उसे **text** के रूप में लौटाता है (`Pixelco`), इसलिए numeric comparisons के लिए आप उसे cast करते हैं। `@>` **containment** test करता है: `attributes @> '{\"color\":\"red\"}'` true है अगर वो key/value मौजूद है, और ये arrays के अंदर भी काम करता है। `?` test करता है कि कोई **top-level key मौजूद है** या नहीं; `?|` और `?&` कई keys में से कोई भी/सारी check करते हैं। `#>` और `#>>` nested path के लिए वही करते हैं जो `->`/`->>` करते हैं।",
+    "followUps": [
+      "(attributes ->> 'ram_gb') > 8 अनपेक्षित तरीके से क्यों behave करता है?",
+      "@? क्या करता है?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-gin-opclasses",
+    "topic": "JSONB",
+    "question": "jsonb column को index कैसे करते हैं? jsonb_ops और jsonb_path_ops में क्या फ़र्क है?",
+    "answer": "**GIN** index इस्तेमाल करें: `CREATE INDEX ON catalog USING gin (attributes)`। Default **`jsonb_ops`** keys और values को अलग-अलग index करता है और `@>`, `?`, `?|`, `?&`, `@?` और `@@` support करता है। **`jsonb_path_ops`** paths से values तक के hashes index करता है, इसलिए containment के लिए ये **छोटा और आमतौर पर तेज़** है, पर सिर्फ़ `@>`, `@?` और `@@` support करता है, key-existence नहीं। `=`, ranges या ORDER BY से compare होने वाले एक single field के लिए `(attributes ->> 'brand')` पर B-tree **expression index** बेहतर है।",
+    "explanation": "100k products पर default GIN index 824 kB का था, जबकि jsonb_path_ops 464 kB का, और सिर्फ़ jsonb_path_ops होने पर query `attributes ? 'waterproof'` वापस Seq Scan पर चली गई।",
+    "followUps": [
+      "WHERE attributes ->> 'brand' = 'Nova' में GIN index मदद क्यों नहीं करता?",
+      "GIN indexes की write cost क्या है?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-update-jsonb",
+    "topic": "JSONB",
+    "question": "jsonb column के अंदर एक single field कैसे update करते हैं, और इसमें gotchas क्या हैं?",
+    "answer": "Nested value के लिए **`jsonb_set(col, '{path,to,key}', 'value')`**, top-level keys merge करने के लिए **`col || '{...}'`**, और एक key हटाने के लिए **`col - 'key'`** इस्तेमाल करें। Gotchas: `jsonb_set` **बीच के missing objects नहीं बनाता** (value को बिना बदले लौटा देता है), `||` एक **shallow** merge है जो पूरे nested objects को बदल देता है, और हर update **पूरी** jsonb value को एक नए row version के रूप में दोबारा लिखता है, इसलिए बार-बार update होने वाले बड़े documents महँगे पड़ते हैं।",
+    "explanation": "```sql\nUPDATE catalog\nSET attributes = jsonb_set(attributes, '{specs,screen,inches}', '6.4')\nWHERE id = 3;\n\nUPDATE catalog\nSET attributes = attributes || '{\"on_sale\": true}'\nWHERE id = 1;\n```",
+    "followUps": [
+      "ये MongoDB के $set से कैसे तुलना करता है?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-jsonb-vs-columns",
+    "topic": "JSONB",
+    "question": "Data को सामान्य columns की जगह jsonb column में कब store करना चाहिए?",
+    "answer": "**jsonb** उस data के लिए इस्तेमाल करें जिसका shape **बदलता रहता है** और जिसे आप ज़्यादातर दिखाते हैं: category के हिसाब से अलग product attributes, optional settings, third-party payloads। जिस भी चीज़ पर आप अक्सर **filter, sort, join या constraint** लगाते हैं, उसके लिए **असली columns** इस्तेमाल करें, क्योंकि columns को types, `NOT NULL`/`UNIQUE`/`CHECK`, foreign keys, compact storage और सटीक planner statistics मिलते हैं। आम design hybrid होता है: core columns plus एक `attributes jsonb`; जब हर query किसी JSON field को इस्तेमाल करने लगे, तो उसे column में promote कर दें।",
+    "followUps": [
+      "EAV anti-pattern क्या है?",
+      "क्या jsonb fields पर constraints enforce किए जा सकते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-fts-basics",
+    "topic": "Full-text search",
+    "question": "PostgreSQL में full-text search कैसे काम करता है? tsvector, tsquery और @@ समझाइए।",
+    "answer": "**`tsvector`** document का **lexemes** में normalized रूप है: `to_tsvector('english', 'running shoes')` शब्दों को stem करता है (`run`, `shoe`), stop words हटाता है और positions record करता है। **`tsquery`** search का उसी तरह normalized रूप है, `&`, `|`, `!` और `<->` (phrase) operators के साथ; `websearch_to_tsquery` इसे user input से safely बनाता है। **`@@`** test करता है कि vector query से match करता है या नहीं। `ILIKE '%...%'` के उलट, ये शब्दों के अलग-अलग रूपों से match करता है, `ts_rank` से **rank** हो सकता है और **GIN** से indexable है।",
+    "followUps": [
+      "'ran' शायद 'run' से match क्यों न करे?",
+      "plainto_tsquery और websearch_to_tsquery में क्या फ़र्क है?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-search-design",
+    "topic": "Full-text search",
+    "question": "Scenario: PostgreSQL में अपने store का product search box बनाइए। आप इसे कैसे design करेंगे?",
+    "answer": "एक **generated `tsvector` column** जोड़ें जो name और description को `setweight` के साथ मिलाए (name = A, description = B), ताकि वो अपने-आप sync रहे, और उस पर एक **GIN index**। **`websearch_to_tsquery('english', $1)`** से query करें (quotes, `or`, `-` संभालता है और कभी throw नहीं करता), `@@` से filter करें, **`ts_rank`** से order करें और LIMIT से paginate करें, category और price जैसे सामान्य filters के साथ मिलाकर। Highlighting के लिए `ts_headline` इस्तेमाल करें, और typos के लिए fuzzy matching चाहिए तो `pg_trgm` जोड़ें।",
+    "explanation": "```sql\nALTER TABLE catalog ADD COLUMN search tsvector\n  GENERATED ALWAYS AS (\n    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||\n    setweight(to_tsvector('english', coalesce(description, '')), 'B')\n  ) STORED;\nCREATE INDEX catalog_search_idx ON catalog USING gin (search);\n\nSELECT id, name, ts_rank(search, q) AS rank\nFROM catalog, websearch_to_tsquery('english', $1) AS q\nWHERE search @@ q\nORDER BY rank DESC\nLIMIT 20;\n```\nLesson में इससे 100k products पर search 26 ms के Seq Scan से घटकर Bitmap Index Scan के साथ 0.2 ms पर आ गई।",
+    "followUps": [
+      "Expression index की जगह generated column क्यों इस्तेमाल करें?",
+      "कई languages को कैसे handle करेंगे?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-vs-elasticsearch",
+    "topic": "Full-text search",
+    "question": "Product search को PostgreSQL full-text search से Elasticsearch या OpenSearch पर कब ले जाएँगे?",
+    "answer": "जब तक search millions तक की rows पर 'शब्दों से products ढूँढो' है, PostgreSQL में ही रहें: ये **transactionally consistent** है, इसमें कोई sync pipeline नहीं और कोई extra cluster नहीं। Search engine पर तब जाएँ जब आपको **typo tolerance और fuzzy matching**, rich **relevance tuning** (BM25, synonyms, boosting), बड़े result sets पर **facets और aggregations**, autocomplete चाहिए, या भारी search traffic को primary database से हटाना हो। कीमत है चलाने के लिए एक और system और database व index के बीच **eventual consistency**।",
+    "followUps": [
+      "Elasticsearch को PostgreSQL के साथ sync कैसे रखेंगे?",
+      "Migrate करने से पहले pg_trgm क्या जोड़ सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-jsonb-and-full-text-vs-mongodb",
+    "topic": "JSONB",
+    "question": "JSONB के साथ, क्या PostgreSQL MongoDB की जगह ले सकता है? इन दोनों में से चुन रही team को आप क्या कहेंगे?",
+    "answer": "**कुछ flexible data वाले relational core** के लिए, हाँ: JSONB schema-less attributes, GIN indexing और containment queries देता है, साथ में SQL joins, foreign keys और multi-row ACID transactions, जिन्हें MongoDB उतने सहज रूप से नहीं संभालता। MongoDB तब भी जीतता है जब data **पूरी तरह document-shaped** हो, जब आप बड़े documents के **in-place partial updates** पर निर्भर हों (`$set`, `$push`; PostgreSQL पूरी value दोबारा लिखता है), और जब आपको **built-in horizontal sharding** चाहिए। मैं 'SQL vs NoSQL' पसंद के आधार पर नहीं, data के shape और scale के आधार पर चुनूँगा।",
+    "followUps": [
+      "JSONB में statistics की कमी कहाँ नुकसान करती है?",
+      "MongoDB का $lookup SQL joins से कैसे तुलना करता है?"
+    ]
+  }
+]

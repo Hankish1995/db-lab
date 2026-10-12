@@ -1,0 +1,87 @@
+[
+  {
+    "slug": "postgres-explain-vs-explain-analyze",
+    "topic": "EXPLAIN",
+    "question": "PostgreSQL में EXPLAIN और EXPLAIN ANALYZE में क्या फ़र्क है?",
+    "answer": "`EXPLAIN` वो plan दिखाता है जो planner इस्तेमाल करने का **इरादा** रखता है, **estimated** costs और row counts के साथ, query चलाए बिना। `EXPLAIN ANALYZE` query को **सच में execute** करता है और हर node पर असली timings, असली row counts और loop counts जोड़ता है। `BUFFERS` जोड़ने पर ये भी दिखता है कि कितने pages cache से और कितने OS से पढ़े गए। क्योंकि ANALYZE statement को सच में चलाता है, इसलिए INSERT/UPDATE/DELETE को `BEGIN ... ROLLBACK` में लपेटें।",
+    "explanation": "```sql\nBEGIN;\nEXPLAIN (ANALYZE, BUFFERS)\nUPDATE products SET price = price * 1.1 WHERE category = 'toys';\nROLLBACK;\n```",
+    "followUps": [
+      "Cost वाले number का क्या मतलब है?",
+      "EXPLAIN ANALYZE असली query से धीमा क्यों हो सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-read-a-plan",
+    "topic": "EXPLAIN",
+    "question": "PostgreSQL का query plan कैसे पढ़ते हैं? cost, rows, actual time और loops का क्या मतलब है?",
+    "answer": "Plan एक **tree** है: execution सबसे ज़्यादा indented nodes से शुरू होता है और rows **ऊपर** parent की ओर बहती हैं। `cost=startup..total` planner की abstract units में होता है और इसमें children शामिल होते हैं। `rows` हर execution की **estimated** rows है; `actual time=first..last` असली milliseconds है और उसके बगल वाला `rows` असली rows, दोनों **per loop**। इसलिए आप `loops` से गुणा करते हैं: `rows=10 loops=20` वाले node ने लगभग 200 rows दीं।",
+    "followUps": [
+      "width का क्या मतलब है?",
+      "Parallel plan में loops=3 क्यों होता है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-scan-types",
+    "topic": "EXPLAIN",
+    "question": "Seq Scan, Index Scan, Index Only Scan और Bitmap Heap Scan समझाइए। PostgreSQL हर एक को कब चुनता है?",
+    "answer": "**Seq Scan** पूरी table पढ़ता है: सबसे अच्छा तब, जब rows का बड़ा हिस्सा match करे या कोई index मदद न करे। **Index Scan** index पर चलता है और हर row heap से लाता है: कम rows के लिए या index order में `ORDER BY ... LIMIT` के लिए सबसे अच्छा। **Index Only Scan** सिर्फ़ index से जवाब देता है, जब सारे columns उसमें हों और visibility map में pages all-visible हों। **Bitmap Index + Bitmap Heap Scan** matching pages को एक bitmap में इकट्ठा करता है और हर page को physical order में एक बार पढ़ता है: बिखरी हुई मध्यम संख्या की rows के लिए सबसे अच्छा, और ये कई indexes को combine भी कर सकता है।",
+    "explanation": "500k-row वाली `orders` table में `created_at >= now() - 7 days` (~1% rows) ने bitmap scan इस्तेमाल किया, जबकि `>= now() - 600 days` (~82%) ने index होते हुए भी parallel seq scan इस्तेमाल किया। Table के ज़्यादातर हिस्से को index से पढ़ने का मतलब random I/O है, और ये sequentially पढ़ने से धीमा है।",
+    "followUps": [
+      "Index Only Scan पर Heap Fetches का क्या मतलब है?",
+      "Bitmap heap scan पर Recheck Cond क्यों होती है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-join-algorithms",
+    "topic": "EXPLAIN",
+    "question": "PostgreSQL के तीन join algorithms कौन से हैं और हर एक कब चुना जाता है?",
+    "answer": "**Nested Loop**: हर outer row के लिए inner input में matches ढूँढता है; तब ideal जब outer side छोटी हो और inner side पर index हो, और non-equality conditions सिर्फ़ यही handle करता है। **Hash Join**: छोटे input से hash table बनाता है और बड़े input से उसे probe करता है; equality condition वाले बड़े unsorted inputs के लिए ideal। **Merge Join**: join key पर पहले से sorted दो inputs पर कदम-से-कदम चलता है; तब ideal जब दोनों indexes से sorted आएँ या बड़े हों।",
+    "followUps": [
+      "Hash node पर Batches: 2 का क्या मतलब है?",
+      "Planner गलती से nested loop क्यों चुन सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-estimates-vs-actual",
+    "topic": "EXPLAIN",
+    "question": "EXPLAIN ANALYZE में planner ने 1 row का estimate किया, पर node ने 199,000 लौटाईं। इससे क्या पता चलता है और इसे कैसे ठीक करेंगे?",
+    "answer": "Planner के **statistics गलत हैं**, आमतौर पर bulk load के बाद stale हो गए या कभी collect ही नहीं हुए। उसने 1 row की उम्मीद की थी, इसलिए शायद एक **nested loop** चुना जो फिर 199,000 बार चला। Table पर `ANALYZE` चलाएँ (और check करें कि autovacuum साथ चल पा रहा है); correlated columns के लिए `CREATE STATISTICS` जोड़ें, और skewed columns के लिए statistics target बढ़ाएँ। ANALYZE के बाद planner hash या merge join पर switch कर सकता है।",
+    "explanation": "Lesson का असली उदाहरण: stale `coupons` table ने `Nested Loop (rows=1) (actual rows=199000)` दिया, जिसमें inner index scan `loops=199000` पर चला, 284 ms। `ANALYZE coupons` के बाद plan Merge Join बन गया, 77 ms पर।",
+    "followUps": [
+      "Autovacuum ANALYZE कब चलाता है?",
+      "Extended statistics क्या होते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-sort-spill",
+    "topic": "EXPLAIN",
+    "question": "एक plan में 'Sort Method: external merge Disk: 28376kB' दिख रहा है। इसका क्या मतलब है और आप क्या कर सकते हैं?",
+    "answer": "Sort को **`work_mem`** (default 4 MB) से ज़्यादा memory चाहिए थी, इसलिए वो disk पर **temporary files में spill हो गया**, जो in-memory quicksort से बहुत धीमा है। पहले काम कम करें: `LIMIT` जोड़ें (इससे top-N heapsort मिलता है), कम columns select करें, या ऐसा index जोड़ें जो rows पहले से sorted लौटाए। अगर बड़ा sort सच में ज़रूरी है, तो `work_mem` **उस session या role के लिए** बढ़ाएँ, globally नहीं, क्योंकि ये हर connection के हर sort/hash node पर लागू होता है।",
+    "followUps": [
+      "hash_mem_multiplier क्या है?",
+      "BUFFERS spill को कैसे दिखाता है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-pg-stat-statements",
+    "topic": "EXPLAIN",
+    "question": "Production PostgreSQL database में किन queries को optimize करना है, ये कैसे पता करेंगे?",
+    "answer": "**`pg_stat_statements`** extension इस्तेमाल करें (`shared_preload_libraries` से load होता है), जो हर normalized query के calls, total और mean execution time, rows और block I/O जोड़कर रखता है। कुल मिलाकर सबसे महँगा क्या है, ये जानने के लिए **`total_exec_time`** से sort करें, क्योंकि लाखों बार चलने वाली तेज़ query अक्सर कभी-कभार चलने वाली धीमी report से ज़्यादा भारी पड़ती है। फिर उन पर realistic parameters के साथ `EXPLAIN (ANALYZE, BUFFERS)` चलाएँ, और slow queries के plans उसी वक़्त log करने के लिए `auto_explain` इस्तेमाल करें।",
+    "followUps": [
+      "Mean time की जगह total time से sort क्यों करें?",
+      "auto_explain क्या जोड़ता है?"
+    ]
+  },
+  {
+    "slug": "postgres-explain-slow-query-scenario",
+    "topic": "EXPLAIN",
+    "question": "Scenario: orders table के millions of rows तक बढ़ने के बाद 'My orders' page slow हो गया। मुझे बताइए कि आप इसे कैसे diagnose और fix करेंगे।",
+    "answer": "पहले **`pg_stat_statements`** में query और उसकी cost confirm करूँगा, फिर असली customer id के साथ **`EXPLAIN (ANALYZE, BUFFERS)`** चलाऊँगा। मैं देखूँगा कि कहीं **बहुत बड़े Rows Removed by Filter वाला Seq Scan** या **explicit Sort** तो नहीं है, और estimated rows actual rows से match करती हैं या नहीं। आम fix है filter और order दोनों से match करता composite index, `CREATE INDEX CONCURRENTLY ON orders (customer_id, created_at DESC)`, साथ में keyset pagination वाला `LIMIT`, जो plan को एक Index Scan बना देता है जो एक page के बाद रुक जाता है। फिर verify करने के लिए EXPLAIN दोबारा चलाऊँगा, और check करूँगा कि estimates ठीक हैं (ANALYZE) और order_items के foreign key column पर भी index है।",
+    "explanation": "Lesson के असली numbers: 500k orders पर Parallel Seq Scan + Sort: 76.8 ms और 4,786 pages। Composite index और LIMIT 5 के बाद: Index Scan, 0.118 ms, 11 pages।\n\n```sql\nSELECT id, total, created_at\nFROM orders\nWHERE customer_id = $1 AND created_at < $2  -- keyset cursor\nORDER BY created_at DESC\nLIMIT 20;\n```",
+    "followUps": [
+      "CONCURRENTLY क्यों?",
+      "गहरे pages पर OFFSET pagination धीमा क्यों होता है?",
+      "अगर ये psql में तेज़ हो पर app से धीमा, तो?"
+    ]
+  }
+]

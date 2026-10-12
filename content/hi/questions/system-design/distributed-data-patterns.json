@@ -1,0 +1,62 @@
+[
+  {
+    "slug": "distributed-data-patterns-why-hard",
+    "topic": "Distributed transactions",
+    "question": "जो checkout orders, payments और inventory services में फैला है, उसके लिए आप सीधे एक database transaction क्यों इस्तेमाल नहीं कर सकते?",
+    "answer": "ACID transaction **एक database** के अंदर रहता है। जब orders, payments और inventory, तीनों का अपना-अपना database हो, और payments एक external provider से होकर जाते हों, तो कोई shared transaction manager नहीं होता, इसलिए एक crash या timeout कुछ steps को पूरा और कुछ को अधूरा छोड़ सकता है (जैसे पैसे कट गए पर stock reserve नहीं हुआ)। इसकी जगह आपको एक coordination pattern चाहिए: जहाँ सारे participants support करें वहाँ **2PC**, या ज़्यादा आम तौर पर compensations के साथ एक **saga**।",
+    "followUps": ["Two-phase commit क्या है?", "Saga क्या है?"]
+  },
+  {
+    "slug": "distributed-data-patterns-2pc",
+    "topic": "Distributed transactions",
+    "question": "Two-phase commit कैसे काम करता है, और इसकी मुख्य कमज़ोरी क्या है?",
+    "answer": "एक **coordinator** हर participant से **prepare** करने को कहता है: काम करो, उसे durable बनाओ, locks पकड़े रखो और YES या NO vote दो। अगर सब YES vote दें, तो वो फ़ैसला record करता है और सबको **commit** करने को कहता है; नहीं तो सब abort करते हैं। कमज़ोरी है **blocking**: जिस participant ने YES vote दिया वो अकेले फ़ैसला नहीं कर सकता, इसलिए अगर coordinator फ़ैसला भेजने से पहले crash हो जाए, तो participants उसके recover होने तक in doubt रहते हैं और **locks पकड़े रहते हैं**। यह round trips भी बढ़ाता है और ज़रूरी करता है कि हर participant (third-party APIs समेत) इसे support करे।",
+    "explanation": "PostgreSQL participant वाली तरफ़ को `PREPARE TRANSACTION` / `COMMIT PREPARED` के रूप में देता है (default रूप से `max_prepared_transactions = 0` से disabled)। MongoDB multi-shard transactions के लिए अंदर ही अंदर 2PC इस्तेमाल करता है।",
+    "followUps": ["2PC अब भी कहाँ ठीक बैठता है?", "Saga blocking से कैसे बचता है?"]
+  },
+  {
+    "slug": "distributed-data-patterns-saga",
+    "topic": "Sagas",
+    "question": "Saga pattern क्या है? Choreography और orchestration की तुलना करें।",
+    "answer": "**Saga** local transactions का एक sequence है, हर service का एक, जहाँ हर failure **compensating actions** trigger करता है जो पहले के steps को semantically undo करते हैं (जैसे inventory reservation fail हो तो payment refund करना)। **Choreography** में services बिना किसी central control के एक-दूसरे के events पर react करती हैं: कुछ steps के लिए आसान, पर flow छिपा रहता है और trace करना मुश्किल होता है। **Orchestration** में एक orchestrator (या Temporal जैसा workflow engine) हर service को बताता है कि क्या करना है और state track करता है: साफ़ और debug करने में आसान, पर एक central component की कीमत पर।",
+    "followUps": ["Compensation और rollback एक जैसे क्यों नहीं हैं?", "Saga steps के बीच isolation आप कैसे संभालेंगे?"]
+  },
+  {
+    "slug": "distributed-data-patterns-dual-write-outbox",
+    "topic": "Outbox",
+    "question": "Dual-write problem क्या है, और Transactional Outbox pattern इसे कैसे solve करता है?",
+    "answer": "Database में लिखना और फिर broker पर publish करना दो अलग systems हैं, इसलिए उनके बीच crash होने पर या तो order रह जाता है जिसका **कोई event नहीं**, या event रह जाता है जिसका **कोई order नहीं**। **Outbox** pattern event को business change के साथ **उसी local transaction में** एक `outbox` table की row के रूप में लिखता है, ताकि या तो दोनों commit हों या कोई नहीं। फिर एक relay outbox rows publish करता है, polling (`FOR UPDATE SKIP LOCKED`) से या database log पढ़ने वाले **CDC** से (जैसे Debezium, या MongoDB change streams)।",
+    "explanation": "```sql\nBEGIN;\nINSERT INTO orders (id, user_id, total_cents, status) VALUES ('ord_1001', 42, 12999, 'PENDING');\nINSERT INTO outbox (aggregate_id, event_type, payload)\nVALUES ('ord_1001', 'OrderCreated', '{\"orderId\":\"ord_1001\"}');\nCOMMIT;\n```\nRelay publish करके row mark करने से पहले crash हो सकता है, इसलिए delivery **at-least-once** होती है।",
+    "followUps": ["Outbox exactly-once की जगह at-least-once delivery क्यों देता है?", "Polling relay vs CDC: trade-offs क्या हैं?"]
+  },
+  {
+    "slug": "distributed-data-patterns-idempotency-key",
+    "topic": "Idempotency",
+    "question": "एक payment request time out हो गई और client retry करता है। आप कैसे पक्का करेंगे कि customer से दो बार पैसे न कटें?",
+    "answer": "एक **idempotency key** इस्तेमाल करें: client हर checkout attempt के लिए एक unique key बनाता है और हर retry पर उसे भेजता है। Server उसे एक **unique constraint** वाली payments table में insert करता है (`ON CONFLICT DO NOTHING`); अगर key पहले से मौजूद है, तो वो दोबारा charge करने के बजाय **stored result** लौटाता है, या अगर पहला attempt अभी चल रहा है तो \"still processing\" बताता है। वही key payment provider को भी भेजें ताकि उसकी तरफ़ भी idempotent रहे।",
+    "explanation": "Request parameters का एक hash भी store करें और अलग parameters के साथ दोबारा इस्तेमाल हुई key को reject करें, और keys को इतनी देर रखें कि असल retry windows cover हो जाएँ (जैसे 24 hours)।",
+    "followUps": ["Key कौन बनाए, client या server?", "अगर दो retries एक ही समय पर आ जाएँ तो?"]
+  },
+  {
+    "slug": "distributed-data-patterns-idempotent-consumer",
+    "topic": "Idempotency",
+    "question": "आपका message broker at-least-once deliver करता है। आप एक idempotent consumer कैसे बनाएँगे?",
+    "answer": "या तो operation को **स्वाभाविक रूप से idempotent** बनाएँ (`SET status = 'SHIPPED'` safely दोहराया जा सकता है; `reserved = reserved + 1` नहीं), या **deduplicate** करें: message ID को side effect वाले **उसी transaction में** primary key वाली `processed_messages` table में insert करें। Duplicate key violate करता है, transaction rollback होता है, और consumer बस message acknowledge कर देता है। At-least-once delivery और idempotent consumers मिलकर effectively-once processing देते हैं।",
+    "followUps": ["Dedup insert उसी transaction में क्यों होना चाहिए?", "Processed IDs आप कितने समय तक रखेंगे?"]
+  },
+  {
+    "slug": "distributed-data-patterns-event-sourcing-cqrs",
+    "topic": "Event sourcing",
+    "question": "Event sourcing और CQRS क्या हैं, और कब ये अपनी कीमत के लायक हैं?",
+    "answer": "**Event sourcing** events के sequence (`OrderPlaced`, `PaymentCaptured`…) को source of truth के रूप में store करता है और current state उन्हें replay करके निकालता है, आमतौर पर snapshots के साथ। **CQRS** write model को उन read models से अलग करता है जो खास queries के लिए बने हैं और asynchronously update होते हैं। ये तब फ़ायदेमंद हैं जब आपको पूरा audit trail या temporal queries चाहिए (ledgers, finance) या जब read और write shapes बहुत अलग हों। कीमतें: हमेशा के लिए event schema versioning, eventually consistent read models, projections दोबारा बनाना, और सीखने में ज़्यादा मेहनत।",
+    "followUps": ["क्या CQRS के लिए event sourcing ज़रूरी है?", "Historical events में bug आप कैसे ठीक करेंगे?"]
+  },
+  {
+    "slug": "distributed-data-patterns-checkout-design",
+    "topic": "Sagas",
+    "question": "Orders, Payments, Inventory और Email services में checkout flow design करें, ताकि कोई भी step fail हो या retry हो, तब भी वो सही रहे।",
+    "answer": "एक **orchestrated saga** इस्तेमाल करें: order को `PENDING` के रूप में बनाएँ, **inventory reserve करें** (छोड़ना सस्ता है), **idempotency key** के साथ payment **authorize** करें, फिर order confirm करें, payment capture करें और email भेजें। Failure पर उल्टे क्रम में idempotent **compensations** चलाएँ: payment void या refund करें, reservation छोड़ें, order को `CANCELLED` mark करें। हर service अपने events एक **transactional outbox** से publish करती है, हर consumer **idempotent** होता है, और `PENDING` status एक semantic lock का काम करता है ताकि दूसरे flows order को final न मानें।",
+    "explanation": "Order मायने रखता है: जिन steps के fail होने की संभावना ज़्यादा है या जिन्हें undo करना आसान है, वो पहले आते हैं। Reservation छोड़ना customer को दिखता ही नहीं; refund उसके statement पर दिखता है। Timeouts जोड़ें ताकि अटका हुआ saga अपने आप compensate हो जाए।",
+    "followUps": ["अगर कोई compensation खुद fail हो जाए तो?", "यहाँ 2PC क्यों नहीं?"]
+  }
+]

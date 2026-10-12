@@ -1,0 +1,60 @@
+[
+  {
+    "slug": "what-is-a-database-db-vs-dbms",
+    "topic": "Database basics",
+    "question": "Data, database और DBMS में क्या फ़र्क है?",
+    "answer": "**Data** कच्चे facts हैं (एक order, एक price)। **Database** उस data का एक व्यवस्थित collection है। **DBMS** वह software है जो database को store, query, secure और protect करता है, जैसे PostgreSQL या MongoDB। तो `shop` एक database है; PostgreSQL वह DBMS है जो उसे manage करता है।",
+    "followUps": ["DBMS आपको ऐसा क्या देता है जो एक file नहीं देती?", "MongoDB एक database है या DBMS?"]
+  },
+  {
+    "slug": "what-is-a-database-why-not-files",
+    "topic": "Database basics",
+    "question": "JSON files में data रखने की जगह database क्यों इस्तेमाल करें?",
+    "answer": "DBMS आपको चार चीज़ें देता है जो files नहीं देतीं: **concurrency control** (कई users सुरक्षित तरीक़े से write करें, कोई lost update नहीं), **efficient querying** (सब कुछ load करने की जगह indexes और query planner), **integrity** (types, constraints, validation) और **crash safety** (write-ahead log, ताकि crash कभी आधा लिखा data न छोड़े)। यह RAM से बड़े data, security और backups को भी संभालता है।",
+    "explanation": "JSON file के साथ classic failure है **lost update**: दो requests दोनों `stock = 1` पढ़ती हैं, दोनों `stock = 0` लिखती हैं, और आप एक item दो बार बेच देते हैं। Database इसे locking/MVCC, atomic updates या transactions से रोकता है।",
+    "followUps": ["Lost update क्या है?", "Plain file असल में कब ठीक है?"]
+  },
+  {
+    "slug": "what-is-a-database-table-vs-collection",
+    "topic": "Data models",
+    "question": "Tables, rows और columns MongoDB के किन concepts से map होते हैं?",
+    "answer": "**Table** एक **collection** से map होती है, **row** एक **document** से, और **column** एक **field** से। बड़ा फ़र्क: table की rows typed columns का एक fixed set share करती हैं, जबकि documents के shapes अलग-अलग हो सकते हैं और वे nested objects और arrays **embed** कर सकते हैं। Relational data tables के बीच keys से जुड़ा होता है; document data अक्सर एक साथ embedded रहता है।",
+    "followUps": ["Schema क्या है?", "क्या MongoDB schema enforce करता है?"]
+  },
+  {
+    "slug": "what-is-a-database-oltp-vs-olap",
+    "topic": "Workloads",
+    "question": "OLTP और OLAP में क्या फ़र्क है?",
+    "answer": "**OLTP** application को serve करता है: बहुत सारे छोटे, तेज़ reads और writes जो key से कुछ ही rows छूते हैं, जैसे order place करना। **OLAP** analytics को serve करता है: कुछ बड़ी queries जो लाखों rows scan और aggregate करती हैं, जैसे हर महीने हर category का revenue। OLTP databases (PostgreSQL, MongoDB) आमतौर पर row-oriented होते हैं; OLAP warehouses (BigQuery, Snowflake, ClickHouse) आमतौर पर **column-oriented** होते हैं ताकि aggregates सिर्फ़ ज़रूरी columns ही पढ़ें।",
+    "followUps": ["Analytics के लिए column-oriented storage तेज़ क्यों है?", "Production database पर reports क्यों नहीं चलानी चाहिए?"]
+  },
+  {
+    "slug": "what-is-a-database-wal",
+    "topic": "Storage internals",
+    "question": "Write-ahead log क्या है और databases इसे क्यों इस्तेमाल करते हैं?",
+    "answer": "**Write-ahead log** एक append-only file है जिसमें database data files बदलने से **पहले** हर बदलाव record करता है। Commit पर log disk पर flush (`fsync`) होता है, जबकि बदले हुए pages memory में रहते हैं और बाद में checkpoints पर batches में लिखे जाते हैं। Crash के बाद database committed changes को redo करने के लिए **log को replay करता है**। इससे writes तेज़ (sequential appends) और durable दोनों होते हैं। PostgreSQL इसे **WAL** कहता है; MongoDB का WiredTiger इसे **journal** कहता है।",
+    "followUps": ["Checkpoint क्या है?", "Page क्या है?", "WAL का replication से क्या संबंध है?"]
+  },
+  {
+    "slug": "what-is-a-database-pages-and-cache",
+    "topic": "Storage internals",
+    "question": "High level पर, database data को कैसे store और read करता है?",
+    "answer": "Data disk पर fixed-size **pages** में store होता है (PostgreSQL में default 8 KB), और database हमेशा पूरे pages read और write करता है। हाल ही में इस्तेमाल हुए pages memory में cache होते हैं (PostgreSQL **shared buffers**, WiredTiger **cache**), इसलिए hot data RAM से serve होता है। **Indexes**, आमतौर पर B-trees, values को locations से map करते हैं ताकि queries को हर page scan न करना पड़े। इसीलिए performance के लिए memory में fit होने वाला working set और सही indexes इतने ज़रूरी हैं।",
+    "followUps": ["जब working set memory में fit नहीं होता तब क्या होता है?", "B-tree क्या है?"]
+  },
+  {
+    "slug": "what-is-a-database-types",
+    "topic": "Database types",
+    "question": "Databases के मुख्य types बताइए और हर एक कब इस्तेमाल करेंगे।",
+    "answer": "**Relational** (PostgreSQL) structured, related data और transactions के लिए। **Document** (MongoDB) JSON जैसे records के लिए जो पूरे के पूरे पढ़े जाते हैं। **Key-value** (Redis) caching और sessions के लिए। **Wide-column** (Cassandra) partition key से भारी write volumes के लिए। **Graph** (Neo4j) जब relationships ही query हों। **Time-series** (TimescaleDB, InfluxDB) metrics के लिए। **Search** (Elasticsearch) full-text relevance के लिए। **Vector** (Pinecone, pgvector) embedding similarity search के लिए।",
+    "followUps": ["Product search box के लिए आप कौन-सा इस्तेमाल करेंगे?", "क्या एक ही database इनमें से कई काम कर सकता है?"]
+  },
+  {
+    "slug": "what-is-a-database-ecommerce-design",
+    "topic": "Database types",
+    "question": "आप शुरू से एक e-commerce platform बना रहे हैं। आप कौन-से data stores इस्तेमाल करेंगे और किसलिए?",
+    "answer": "Users, products, orders, payments और inventory के लिए **एक primary OLTP database** (PostgreSQL या MongoDB) से शुरू कीजिए, क्योंकि इन्हें transactions और integrity चाहिए। फिर sessions, cart caching और rate limiting के लिए **Redis** जोड़िए; images के लिए **object storage** (S3), और database में सिर्फ़ URLs; जब product search को relevance और typo tolerance चाहिए तब एक **search engine** (Elasticsearch/OpenSearch या Atlas Search); और reporting के लिए एक **warehouse** ताकि analytics कभी checkout को धीमा न करे। हर store तभी जोड़िए जब कोई असली access pattern उसकी operational cost को justify करे।",
+    "explanation": "Interviewers दो चीज़ें देखते हैं: हर store को एक **access pattern** से match करना, और संयम। हर extra datastore का मतलब है sync pipelines, ज़्यादा failure modes और ज़्यादा on-call। अच्छा जवाब बताता है कि आप किससे शुरू करेंगे और कौन-सी चीज़ अगला store जोड़ने की वजह बनेगी।",
+    "followUps": ["Search index को database के साथ sync में कैसे रखेंगे?", "अगर team बहुत छोटी हो तो?"]
+  }
+]

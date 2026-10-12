@@ -1,0 +1,93 @@
+[
+  {
+    "slug": "mongodb-transactions-single-doc-atomic",
+    "topic": "MongoDB transactions",
+    "question": "क्या MongoDB writes atomic होते हैं? Transaction की असल में ज़रूरत कब पड़ती है?",
+    "answer": "**Single document** पर हर write atomic होता है, उसके embedded arrays और sub-documents समेत। इसलिए अगर आप साथ बदलने वाले data को embed करते हैं (जैसे line items के साथ एक order), तो आपको transaction की ज़रूरत नहीं। **Multi-document transaction** की ज़रूरत तभी है जब एक logical operation को कई documents या collections को सब-या-कुछ-नहीं तरीके से बदलना हो, जैसे order बनाना, stock घटाना और payment insert करना।",
+    "followUps": [
+      "बिना transaction के stock को सुरक्षित रूप से कैसे घटाएँगे?",
+      "Deployment के हिसाब से transaction को क्या चाहिए?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-requirements",
+    "topic": "MongoDB transactions",
+    "question": "MongoDB में multi-document transactions की ज़रूरतें और limits क्या हैं?",
+    "answer": "इन्हें **replica set या sharded cluster** चाहिए (standalone नहीं), और हर operation एक ही **session** में चलना चाहिए। Default रूप से transaction **60 seconds** (`transactionLifetimeLimitSeconds`) के बाद abort हो जाता है, और उसके अंदर reads को read preference `primary` इस्तेमाल करना होगा। ये single-document writes से महँगे भी हैं, इसलिए इन्हें छोटा और हल्का रखें।",
+    "followUps": [
+      "Local development में transactions कैसे चलाते हैं?",
+      "Primary election के दौरान transaction का क्या होता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-with-transaction-retries",
+    "topic": "MongoDB transactions",
+    "question": "session.withTransaction() ऐसा क्या करता है जो manual startTransaction/commitTransaction नहीं करता?",
+    "answer": "यह transaction शुरू करता है, आपका callback चलाता है, commit करता है, और **अपने-आप retry करता है**: `TransientTransactionError` (write conflict, election, network issue) पर यह **पूरा callback दोबारा चलाता है**, और `UnknownTransactionCommitResult` पर **commit को retry करता है**। अगर आपका callback कोई और error throw करे, तो यह abort करके error वापस फेंक देता है। क्योंकि callback एक से ज़्यादा बार चल सकता है, उसमें emails भेजने जैसे ऐसे side effects नहीं होने चाहिए जो दोहराए न जा सकें।",
+    "explanation": "```js\nawait session.withTransaction(async () => {\n  await products.updateOne({ _id, stock: { $gte: qty } }, { $inc: { stock: -qty } }, { session });\n  await orders.insertOne(order, { session });\n});\n```",
+    "followUps": [
+      "Commit को retry करना सुरक्षित क्यों है?",
+      "Write conflict क्या है?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-write-concern",
+    "topic": "Write concern",
+    "question": "Write concern समझाइए: w:1, w:'majority', j:true और wtimeout।",
+    "answer": "Write concern बताता है कि **server write को कब acknowledge करता है**। `w: 1` = primary के apply करने के बाद (तेज़, लेकिन अगर primary replicate करने से पहले fail हो जाए तो **rollback** हो सकता है)। `w: 'majority'` = voting members की majority के पास पहुँचने के बाद, इसलिए यह **failover में बच जाता है**; 5.0 से ज़्यादातर deployments के लिए यही default है। `j: true` = on-disk journal में पहुँचने के बाद ही। `wtimeout` **इंतज़ार** बंद करता है, लेकिन write को undo नहीं करता, इसलिए write फिर भी succeed हो सकता है।",
+    "followUps": [
+      "w:0 किस काम आता है?",
+      "Replica set में rollback क्या होता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-read-concern",
+    "topic": "Read concern",
+    "question": "Read concern क्या है, और local, majority, snapshot और linearizable में क्या फ़र्क है?",
+    "answer": "Read concern control करता है कि आप जो data पढ़ते हैं वो **कितना committed** होना चाहिए। `local` (default) node का latest data लौटाता है, जो बाद में rollback हो सकता है। `majority` सिर्फ़ majority-acknowledged data लौटाता है जो **rollback नहीं हो सकता**। `snapshot` एक consistent point-in-time view देता है और transactions में इस्तेमाल होता है। `linearizable` guarantee देता है कि read शुरू होने से पहले पूरा हुआ हर majority-acknowledged write आपको दिखेगा; यह सिर्फ़ primary पर single-document reads के लिए काम करता है और धीमा है। `available` `local` जैसा है लेकिन sharded clusters में orphaned documents लौटा सकता है।",
+    "followUps": [
+      "Linearizable धीमा क्यों है?",
+      "Bank balance के लिए आप कौन सा read concern इस्तेमाल करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-read-preference",
+    "topic": "Read preference",
+    "question": "Read preference क्या है, और secondaries से पढ़ने का जोखिम क्या है?",
+    "answer": "Read preference चुनता है कि reads **कौन सा replica set member** serve करे: `primary` (default), `primaryPreferred`, `secondary`, `secondaryPreferred` या `nearest`। Secondaries **asynchronously** replicate करते हैं, इसलिए वो पीछे रह सकते हैं, और आपको **stale reads** मिल सकते हैं: user order करता है और उसे \"my orders\" में वो दिखता नहीं। Analytics या reports के लिए यह ठीक है, लेकिन writes के बाद user-facing reads को `primary` या causally consistent session इस्तेमाल करना चाहिए।",
+    "followUps": [
+      "maxStalenessSeconds क्या करता है?",
+      "क्या secondaries से पढ़ने से सच में writes scale होते हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-causal-consistency",
+    "topic": "Consistency",
+    "question": "Causally consistent session क्या है, और कौन सी settings सबसे मज़बूत guarantees देती हैं?",
+    "answer": "Causally consistent session आपके operations का cluster time track करता है, ताकि session के बाद वाले reads पहले के writes को दिखाएँ, secondary पर भी: **read your writes, monotonic reads, monotonic writes और writes-follow-reads**। ये guarantees पूरी तरह तभी लागू होती हैं जब `w: 'majority'` writes और `majority` read concern हो। रोज़मर्रा की सबसे मज़बूत guarantees के लिए: `w: 'majority'` (साथ में `j: true`), read concern `majority` (या single-document reads के लिए `linearizable`), read preference `primary`, और जब कई documents को साथ बदलना हो तो `snapshot` के साथ transactions।",
+    "followUps": [
+      "Causal consistency की कीमत क्या है?",
+      "इसका CAP theorem से क्या संबंध है?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-checkout-scenario",
+    "topic": "MongoDB transactions",
+    "question": "Scenario: MongoDB में एक e-commerce store का checkout design कीजिए। क्या आप transaction इस्तेमाल करेंगे?",
+    "answer": "पहले मैं पूछूँगा कि क्या transaction की ज़रूरत है भी: line items, shipping address और status को **order document** में embed करें, और stock को एक **atomic conditional update** (`$inc` के साथ `{ _id, stock: { $gte: qty } }`) से घटाएँ। अगर orders, stock और payments को अलग collections में रहना है और सब-या-कुछ-नहीं होना है, तो मैं `w: 'majority'` के साथ `session.withTransaction` इस्तेमाल करूँगा, हर operation को `{ session }` दूँगा, और stock कम होने पर abort के लिए error throw करूँगा। Transaction को छोटा रखूँगा: prices शुरू होने से पहले compute करूँगा, और payment provider को callback के **बाहर** call करूँगा, `pending` → `paid` जैसे order status और एक idempotency key के साथ, ताकि retries से दो बार charge न हो।",
+    "explanation": "Interviewers यह सुनना चाहते हैं: पहले single-document atomicity, ज़रूरत हो तब transactions, छोटे transactions, retries को withTransaction संभाले, और retry होने वाले callback के अंदर कोई external side effects नहीं।",
+    "followUps": [
+      "अगर payment succeed हो जाए लेकिन commit fail हो तो?",
+      "यह microservices के पार कैसे काम करेगा (saga pattern)?"
+    ]
+  },
+  {
+    "slug": "mongodb-transactions-performance-cost",
+    "topic": "MongoDB transactions",
+    "question": "MongoDB transactions को छोटा क्यों रखना चाहिए?",
+    "answer": "Transaction अपनी पूरी lifetime तक एक **snapshot और locks** पकड़े रहता है। लंबे transactions पुराने data को WiredTiger cache में अटकाए रखते हैं, **write conflicts** बढ़ाते हैं (जिनसे retries करने पड़ते हैं), और **60-second** की default limit के बाद abort हो जाते हैं। Sharded clusters में multi-shard transactions को two-phase commit भी चाहिए। इसलिए शुरू करने से पहले validate और compute करें, जितने हो सके उतने कम documents छुएँ, और अंदर कभी धीमी external calls का await न करें।",
+    "followUps": [
+      "जब दो transactions एक ही document बदलते हैं तो क्या होता है?"
+    ]
+  }
+]

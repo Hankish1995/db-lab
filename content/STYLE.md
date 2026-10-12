@@ -4,6 +4,9 @@ Read this before writing or editing any lesson or question. The reference lesson
 `lessons/system-design/05-sharding.md` with its questions in `questions/system-design/sharding.json`.
 Match its tone, structure and depth.
 
+Every lesson and question also has a **Hindi version** in `hi/` (same paths). When you add or change an
+English file, add or update its Hindi file following `hi/TRANSLATION.md`, then run `npm run check:hindi`.
+
 ## Who the reader is
 
 A developer with ~4 years of MERN experience preparing for interviews. Smart and practical, but

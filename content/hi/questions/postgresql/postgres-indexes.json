@@ -1,0 +1,68 @@
+[
+  {
+    "slug": "postgres-indexes-types-overview",
+    "topic": "PostgreSQL indexes",
+    "question": "PostgreSQL कौन-से index types देता है, और आप हर एक को कब इस्तेमाल करेंगे?",
+    "answer": "**B-tree** (default): equality, ranges, sorting, prefix LIKE। **GIN**: jsonb, arrays और full-text पर 'contains' वाली queries। **GiST**: ranges, geometry, nearest-neighbour और exclusion constraints। **BRIN**: बहुत बड़ी tables के लिए छोटे-छोटे min/max summaries, जिनकी values physical order के हिसाब से चलती हैं, जैसे append-only logs। **Hash**: सिर्फ़ equality, B-tree से शायद ही कभी बेहतर। इनके ऊपर आप किसी index को **partial**, **expression-based**, **multicolumn** या `INCLUDE` से **covering** बना सकते हैं।",
+    "followUps": ["jsonb attributes column के लिए आप कौन-सा इस्तेमाल करेंगे?", "हर चीज़ के लिए बस B-tree क्यों नहीं?"]
+  },
+  {
+    "slug": "postgres-indexes-partial-index",
+    "topic": "PostgreSQL indexes",
+    "question": "Partial index क्या है? एक e-commerce उदाहरण दीजिए।",
+    "answer": "**Partial index** में सिर्फ़ वे rows होती हैं जो किसी `WHERE` predicate से match करती हैं। उदाहरण: सिर्फ़ 3% orders pending हैं, और dashboard सिर्फ़ pending वाले ही query करता है, इसलिए `CREATE INDEX ON orders (created_at) WHERE status = 'pending'` बहुत छोटा है (मेरे test में 352 kB, जबकि सारी rows के लिए 11 MB), तेज़ है, और writes पर सस्ता है। Planner इसे तभी इस्तेमाल करता है जब query का WHERE predicate को imply करे। एक partial **unique** index 'हर user का एक active cart' जैसे नियम भी enforce करता है।",
+    "followUps": ["क्या यह index WHERE status = 'paid' के लिए इस्तेमाल होगा?", "आप हर user का एक active cart कैसे enforce करेंगे?"]
+  },
+  {
+    "slug": "postgres-indexes-expression-index",
+    "topic": "PostgreSQL indexes",
+    "question": "email पर index WHERE lower(email) = 'a@x.io' में मदद क्यों नहीं करता, और आप इसे कैसे ठीक करेंगे?",
+    "answer": "B-tree `email` से sorted है, `lower(email)` से नहीं, इसलिए planner उसमें seek नहीं कर सकता और sequential scan पर चला जाता है। एक **expression index** बनाइए: `CREATE INDEX ON users (lower(email))` (या case-insensitive uniqueness enforce करने के लिए `UNIQUE`)। Query को बिल्कुल वही expression इस्तेमाल करना होगा, और हर write पर function की CPU cost चुकानी पड़ती है।",
+    "followUps": ["LIKE 'abc%' normal B-tree index इस्तेमाल क्यों नहीं कर सकता?", "text_pattern_ops क्या है?"]
+  },
+  {
+    "slug": "postgres-indexes-covering-visibility-map",
+    "topic": "Index-only scans",
+    "question": "PostgreSQL में index-only scan क्या है, और EXPLAIN कभी-कभी इसके लिए Heap Fetches क्यों दिखाता है?",
+    "answer": "**Index Only Scan** query का जवाब सिर्फ़ index से देता है, जब index में हर ज़रूरी column हो (अक्सर `INCLUDE` के ज़रिए)। लेकिन **MVCC** की वजह से index को नहीं पता कि कोई row version आपके transaction को दिखता है या नहीं, इसलिए PostgreSQL **visibility map** check करता है: अगर page all-visible mark है, तो वह table को छोड़ देता है; वरना row fetch करता है, जो **Heap Fetches** में गिना जाता है। हाल में update हुए pages VACUUM चलने तक all-visible नहीं होते, इसलिए index-only scans उन tables पर सबसे अच्छे चलते हैं जिनका VACUUM ठीक से होता है।",
+    "explanation": "एक test में वही query VACUUM के बाद `Heap Fetches: 0`, उन rows को update करने के बाद 28, और अगले VACUUM के बाद फिर 0 दिखाती थी।",
+    "followUps": ["Key column और INCLUDE column में क्या अंतर है?"]
+  },
+  {
+    "slug": "postgres-indexes-multicolumn-order",
+    "topic": "PostgreSQL indexes",
+    "question": "SELECT ... WHERE user_id = ? ORDER BY created_at DESC LIMIT 10 के लिए आप कौन-सा index बनाएँगे और क्यों?",
+    "answer": "`CREATE INDEX ON orders (user_id, created_at DESC)`। Equality column पहले आता है, इसलिए PostgreSQL सीधे उस user की entries पर पहुँचता है; उनके अंदर entries पहले से `created_at DESC` order में हैं, इसलिए **कोई Sort node नहीं** होता और यह 10 rows के बाद रुक जाता है। सिर्फ़ `user_id` पर index rows ढूँढ तो लेता है, लेकिन फिर भी उसे सारी rows fetch करके sort करनी पड़ती हैं।",
+    "explanation": "500k orders पर असली plans: कोई index नहीं 69 ms (parallel seq scan); `(user_id)` 0.14 ms, Sort के साथ; `(user_id, created_at DESC)` 0.08 ms, Limit के नीचे सादा Index Scan।",
+    "followUps": ["क्या यह index अकेले WHERE created_at > now() - interval '1 day' में मदद करेगा?", "क्या यहाँ index में DESC मायने रखता है?"]
+  },
+  {
+    "slug": "postgres-indexes-gin-vs-brin",
+    "topic": "PostgreSQL indexes",
+    "question": "आप GIN index कब इस्तेमाल करेंगे और BRIN index कब?",
+    "answer": "**GIN** एक inverted index है: यह हर element (jsonb key/value, array item, शब्द) को उन rows से map करता है जिनमें वह है, इसलिए यह `@>`, `?`, array overlap और full-text `@@` के काम आता है। यह थोड़ा बड़ा होता है और धीमे update होता है। **BRIN** table pages की हर range के लिए सिर्फ़ min/max रखता है, इसलिए यह बहुत छोटा है और `created_at` जैसे स्वाभाविक रूप से ordered column से filter होने वाली बड़ी append-only tables के लिए सही है। 3M page views पर एक test में BRIN 24 kB का था जबकि B-tree 64 MB, और इसने 151 ms के scan को 7 ms कर दिया, लेकिन अगर column physically ordered न हो तो यह बेकार है।",
+    "followUps": ["आप कैसे check करेंगे कि कोई column physically ordered है (pg_stats.correlation)?", "क्या jsonb पर GIN index attributes->>'color' = 'red' में मदद करता है?"]
+  },
+  {
+    "slug": "postgres-indexes-unique-index-vs-constraint",
+    "topic": "PostgreSQL indexes",
+    "question": "PostgreSQL में unique constraint और unique index में क्या अंतर है?",
+    "answer": "**Unique constraint** एक unique B-tree index से implement होता है, इसलिए enforcement बिल्कुल एक जैसा है। **Unique index** ज़्यादा कर सकता है: यह **partial** (`WHERE status = 'active'`) या किसी **expression** (`lower(email)`) पर हो सकता है। **Constraint** `DEFERRABLE` हो सकता है, schema में constraint के रूप में दिखता है, और `ON CONFLICT ON CONSTRAINT` में उसका नाम दिया जा सकता है। Foreign keys दोनों में से किसी को भी reference कर सकती हैं, लेकिन partial unique index को नहीं।",
+    "followUps": ["lower(email) पर unique index के against आप upsert कैसे करेंगे?"]
+  },
+  {
+    "slug": "postgres-indexes-create-concurrently",
+    "topic": "Index operations",
+    "question": "200 million rows वाली एक busy orders table पर बिना downtime के index कैसे जोड़ेंगे, और क्या ग़लत हो सकता है?",
+    "answer": "`CREATE INDEX CONCURRENTLY` इस्तेमाल कीजिए: सादे `CREATE INDEX` के उलट, यह inserts, updates और deletes को block नहीं करता। यह धीमा है (table पर दो passes, चल रहे transactions का इंतज़ार करता है) और **transaction block के अंदर नहीं चल सकता**, इसलिए migration tool का लपेटने वाला transaction बंद करना होगा। अगर यह fail हो (जैसे unique index के लिए duplicates, deadlock, cancel), तो यह एक **INVALID** index छोड़ देता है जिसे planner ignore करता है लेकिन जो फिर भी write overhead जोड़ सकता है: उसे `pg_index.indisvalid` से ढूँढिए, `DROP INDEX CONCURRENTLY` कीजिए, कारण ठीक कीजिए और दोबारा कोशिश कीजिए।",
+    "followUps": ["Writes को block किए बिना bloated index को rebuild कैसे करेंगे?", "सादा CREATE INDEX फिर भी reads की इजाज़त क्यों देता है?"]
+  },
+  {
+    "slug": "postgres-indexes-unused-and-bloat",
+    "topic": "Index operations",
+    "question": "आपकी orders table पर writes धीमे होते जा रहे हैं और उस पर 14 indexes हैं। आप कैसे तय करेंगे कि किसे drop करना है या ठीक करना है?",
+    "answer": "**`pg_stat_user_indexes`** में `idx_scan = 0` वाले indexes query कीजिए (unique और primary key indexes को छोड़कर, क्योंकि वे नियम enforce करते हैं) और उनका size देखिए। Drop करने से पहले confirm कीजिए कि stats window काफ़ी लंबी है, **read replicas** भी check कीजिए (stats हर server के अलग होते हैं), और ऐसे **redundant** indexes ढूँढिए जिनके columns किसी दूसरे index का leftmost prefix हों। `DROP INDEX CONCURRENTLY` से drop कीजिए। जो indexes इस्तेमाल होते हैं लेकिन churn से फूल गए हैं, उन्हें **`REINDEX INDEX CONCURRENTLY`** से rebuild कीजिए।",
+    "explanation": "एक test में 500k-row table की हर row update करने से एक covering index 24 MB से 47 MB हो गया; `REINDEX INDEX CONCURRENTLY` ने writes block किए बिना उसे वापस 24 MB कर दिया। HOT updates पर भी विचार कीजिए: जितने कम indexed columns, उतने ज़्यादा updates index maintenance को पूरी तरह skip कर सकते हैं।",
+    "followUps": ["HOT update क्या है और indexes उस पर कैसे असर डालते हैं?", "आप duplicate indexes कैसे ढूँढेंगे?"]
+  }
+]

@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "mongodb-aggregation-what-is-pipeline",
+    "topic": "Aggregation",
+    "question": "MongoDB में aggregation pipeline क्या है?",
+    "answer": "यह **stages का एक ordered array** है जिससे होकर documents बहते हैं, बिल्कुल एक assembly line की तरह। हर stage (`$match`, `$group`, `$sort`, `$lookup`…) अपने पास आए documents को बदलता है और अपना output अगले stage को दे देता है। यह database के अंदर चलता है, इसलिए आपको raw documents app में खींचे बिना \"हर category का revenue\" जैसे computed जवाब मिल जाते हैं।",
+    "followUps": [
+      "यह find() से कैसे अलग है?",
+      "कौन से stages indexes इस्तेमाल कर सकते हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-match-early",
+    "topic": "Aggregation",
+    "question": "$match को आम तौर पर pipeline का पहला stage क्यों होना चाहिए?",
+    "answer": "सिर्फ़ **pipeline की शुरुआत** ही indexes इस्तेमाल कर सकती है, क्योंकि बाद के stages बदले हुए, in-memory documents पर काम करते हैं। शुरुआत में रखा `$match` (और `$sort`) index इस्तेमाल कर सकता है **और** यह भी घटाता है कि बाद के हर stage को कितने documents process करने पड़ें। MongoDB का optimizer कुछ `$match` stages को अपने-आप आगे खिसका देता है, लेकिन computed fields पर निर्भर stages को नहीं, इसलिए इसे खुद जल्दी लिखें और `explain()` से पक्का करें।",
+    "followUps": [
+      "Optimizer आपके लिए क्या reorder करता है?",
+      "आप कैसे check करेंगे कि pipeline ने index इस्तेमाल किया या नहीं?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-unwind",
+    "topic": "Aggregation",
+    "question": "$unwind क्या करता है, और preserveNullAndEmptyArrays किस काम का है?",
+    "answer": "`$unwind` N elements वाले array वाले एक document को **N documents** में बदल देता है, हर element के लिए एक, ताकि आप array items (जैसे order के line items) से group या filter कर सकें। Default रूप से यह उन documents को **drop कर देता है** जिनका array missing, null या खाली है। `preserveNullAndEmptyArrays: true` उन documents को रखता है, जो तब मायने रखता है जब वरना आप, मान लीजिए, बिना items वाले orders को count से चुपचाप खो देते।",
+    "explanation": "```js\n{ $unwind: { path: '$items', preserveNullAndEmptyArrays: true } }\n```\nयह भी ध्यान रखें: बड़े arrays को unwind करने से pipeline से गुज़रने वाले documents की संख्या कई गुना हो जाती है।",
+    "followUps": [
+      "includeArrayIndex क्या है?",
+      "Unwind किए बिना arrays के साथ और कैसे काम कर सकते हैं ($filter, $map, $reduce)?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-group-accumulators",
+    "topic": "Aggregation",
+    "question": "ऐसा pipeline लिखिए जो paid orders के लिए हर product category का कुल revenue लौटाए, जहाँ orders में qty और price वाला items array embedded है।",
+    "answer": "Filter करें, items को unwind करें, category से group करके `qty * price` का sum निकालें, फिर sort करें। SQL में यह `JOIN order_items ... GROUP BY category` है; MongoDB में `$unwind` join की जगह ले लेता है क्योंकि items embedded हैं।",
+    "explanation": "```js\ndb.orders.aggregate([\n  { $match: { status: 'paid' } },\n  { $unwind: '$items' },\n  { $group: {\n      _id: '$items.category',\n      revenue: { $sum: { $multiply: ['$items.qty', '$items.price'] } },\n      unitsSold: { $sum: '$items.qty' }\n  } },\n  { $sort: { revenue: -1 } }\n])\n```",
+    "followUps": [
+      "हर category के top 3 products आप कैसे निकालेंगे?",
+      "$push और $addToSet में क्या फ़र्क है?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-lookup",
+    "topic": "Aggregation",
+    "question": "$lookup कैसे काम करता है, और इसकी performance से जुड़ी गड़बड़ियाँ क्या हैं?",
+    "answer": "`$lookup` उसी database की किसी दूसरी collection के साथ **left outer join** है: हर input document के लिए यह matching documents ढूँढता है और उन्हें एक **array** field में रख देता है। Simple form `localField` को `foreignField` से match करता है; pipeline form extra conditions, sorting या limits के लिए `let` और एक sub-pipeline इस्तेमाल करता है। गड़बड़ियाँ: यह **हर input document के लिए** चलता है, इसलिए foreign field को index करें और पहले `$match` करें; result हमेशा एक array होता है (`$unwind` या `$first` इस्तेमाल करें); और अगर आपको इसकी हर request पर ज़रूरत है, तो शायद data embedded होना चाहिए।",
+    "followUps": [
+      "$lookup vs Mongoose populate?",
+      "आप join करने के बजाय embed कब करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-group-vs-window",
+    "topic": "Aggregation",
+    "question": "$setWindowFields क्या है और यह $group से कैसे अलग है?",
+    "answer": "`$setWindowFields` MongoDB में **SQL window functions** लाता है: running totals, moving averages, `$rank`, `$denseRank`। `$group` हर group को **समेटकर** एक document बना देता है, जबकि `$setWindowFields` **हर document को रखता है** और पड़ोसी documents की एक window के आधार पर एक computed field जोड़ता है, और चाहें तो हर `partitionBy` group के लिए दोबारा शुरू होता है।",
+    "explanation": "Monthly revenue का running total:\n```js\n{ $setWindowFields: {\n    sortBy: { month: 1 },\n    output: { running: { $sum: '$revenue', window: { documents: ['unbounded', 'current'] } } }\n} }\n```",
+    "followUps": [
+      "7-day moving average आप कैसे compute करेंगे?",
+      "Customers को spend के हिसाब से rank कैसे करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-memory-limit",
+    "topic": "Aggregation",
+    "question": "Aggregation पर कौन सी memory limits लागू होती हैं, और allowDiskUse क्या करता है?",
+    "answer": "`$group` या `$sort` जैसा हर **blocking stage** लगभग **100 MB** RAM इस्तेमाल कर सकता है। उससे आगे उसे **disk पर temporary files में spill** करना पड़ता है, जिसे `allowDiskUse` control करता है; MongoDB 6.0 से `allowDiskUseByDefault` server parameter `true` है, इसलिए spilling अपने-आप होती है जब तक आप `allowDiskUse: false` न दें। इससे अलग, हर output document अब भी **16 MB** तक सीमित है, इसलिए एक विशाल `$push` फिर भी fail हो सकता है।",
+    "followUps": [
+      "$group का memory usage आप कैसे घटाएँगे?",
+      "$sort + $limit अकेले $sort से कम memory क्यों इस्तेमाल कर सकता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-out-vs-merge",
+    "topic": "Aggregation",
+    "question": "$out और $merge में क्या फ़र्क है?",
+    "answer": "दोनों pipeline results को एक collection में लिखते हैं और दोनों का **आखिरी stage** होना ज़रूरी है। `$out` पूरी target collection को **replace** कर देता है। `$merge` results को मौजूदा collection में document दर document **merge** करता है, `whenMatched: 'replace' | 'merge' | 'keepExisting'` और `whenNotMatched: 'insert' | 'discard'` जैसे options के साथ। इसी वजह से incrementally maintain होने वाले **materialized views** के लिए `$merge` सही tool है।",
+    "followUps": [
+      "Daily sales report को incrementally refresh आप कैसे करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-aggregation-slow-dashboard-scenario",
+    "topic": "Aggregation",
+    "question": "Scenario: एक admin dashboard हर page load पर 5 करोड़ orders पर पाँच अलग aggregations चलाता है और 8 seconds लेता है। आप इसे कैसे ठीक करेंगे?",
+    "answer": "पहले हर pipeline पर `explain('executionStats')` से **मापें**: पक्का करें कि हर pipeline किसी indexed field (जैसे `{ status: 1, createdAt: 1 }`) पर `$match` से शुरू हो, ताकि वो सब कुछ scan न करे। फिर काम घटाएँ: एक जैसे filter वाली reports को **एक `$facet`** में मिला दें ताकि input एक ही बार पढ़ा जाए। बड़ा fix है **हर request पर history दोबारा compute करना बंद करना**: scheduled `$merge` से एक summary collection में daily या hourly rollups पहले से compute करें, या write के समय `$inc` से counters update रखें, और dashboard को वो छोटा summary पढ़ने दें। अगर फिर भी दिक्कत हो, तो reports को `secondaryPreferred` के साथ किसी secondary या analytics node पर चलाएँ और थोड़ा पुराना data स्वीकार करें।",
+    "explanation": "Dashboards को शायद ही कभी second-level freshness चाहिए। \"हर page view पर 5 करोड़ docs aggregate करो\" को \"हर 5 मिनट में आज के नए orders aggregate करो\" में बदलने से कीमत कई orders of magnitude बदल जाती है।",
+    "followUps": [
+      "Secondaries से पढ़ने के क्या जोखिम हैं?",
+      "अगर पुराने orders refund हों तो rollup को सही कैसे रखेंगे?"
+    ]
+  }
+]

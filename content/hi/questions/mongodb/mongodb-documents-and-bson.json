@@ -1,0 +1,87 @@
+[
+  {
+    "slug": "mongodb-documents-and-bson-what-is-a-document",
+    "topic": "Documents and BSON",
+    "question": "MongoDB में document क्या होता है, और इसका collections और databases से क्या रिश्ता है?",
+    "answer": "**Document** field–value pairs से बना एक single record है, और flat SQL row के उलट, इसमें **arrays और nested documents** हो सकते हैं। Documents **collections** (लगभग tables) में group होते हैं, और collections एक **database** के अंदर रहती हैं। उदाहरण के लिए, एक `products` document में product का नाम, price, sizes array और supplier sub-document सब हो सकता है, इसलिए एक read में पूरा product मिल जाता है।",
+    "followUps": [
+      "Document, SQL row से कैसे अलग है?",
+      "क्या collection के सभी documents में एक जैसे fields होने ज़रूरी हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-json-vs-bson",
+    "topic": "Documents and BSON",
+    "question": "BSON क्या है और MongoDB सीधे JSON क्यों store नहीं करता?",
+    "answer": "**BSON** यानी Binary JSON: JSON जैसे documents का binary encoding। ये **typed** है (इसमें ObjectId, Date, Int32, Int64, Double, Decimal128 और binary data जैसे types हैं, जो JSON में नहीं हैं) और **length-prefixed** है, इसलिए server fields को parse किए बिना skip कर सकता है। इससे scan करना तेज़ होता है और MongoDB फ़र्क कर पाता है, जैसे integer और decimal में, या date और string में।",
+    "followUps": [
+      "क्या BSON हमेशा JSON से छोटा होता है?",
+      "कौन-से BSON types JSON में मौजूद नहीं हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-objectid-structure",
+    "topic": "Documents and BSON",
+    "question": "ObjectId किन चीज़ों से बना होता है, और इस structure के क्या नतीजे होते हैं?",
+    "answer": "ObjectId **12 bytes** का होता है: एक **4-byte timestamp** (epoch से seconds), हर process में एक बार generate होने वाली **5-byte random value**, और एक **3-byte incrementing counter** जो एक random value से शुरू होता है। इसे आमतौर पर driver generate करता है, इसलिए uniqueness के लिए server तक round trip की ज़रूरत नहीं पड़ती। क्योंकि timestamp सबसे पहले आता है, ObjectIds **लगभग time-ordered** होते हैं: आप `getTimestamp()` call कर सकते हैं और `_id` से sort करने पर लगभग insertion order मिलता है, लेकिन इसी वजह से `_id` एक monotonically increasing value भी बन जाता है।",
+    "explanation": "नतीजे:\n- `ObjectId().getTimestamp()` से second तक का creation time मिल जाता है।\n- Order सिर्फ़ अंदाज़न है: एक ही second में अलग-अलग processes से बनी IDs आपस में मिल-जुल सकती हैं।\n- `_id` पर **ranged** shard key एक hot shard बना देती है, क्योंकि हर insert सबसे ऊँची range में जाता है।",
+    "followUps": [
+      "क्या exact ordering के लिए _id पर भरोसा किया जा सकता है?",
+      "ObjectId एक ख़राब ranged shard key क्यों है?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-money-type",
+    "topic": "Documents and BSON",
+    "question": "MongoDB में prices और order totals को आप कैसे store करेंगे, और normal number के रूप में क्यों नहीं?",
+    "answer": "**Decimal128** (`NumberDecimal(\"19.99\")`) इस्तेमाल करें या **integer cents** को Int64 में store करें। Normal JS number एक **binary Double** होता है, जो ज़्यादातर decimal fractions को बिल्कुल सही represent नहीं कर पाता: `0.1 + 0.2` का नतीजा `0.30000000000000004` आता है। ये छोटी-छोटी errors हज़ारों order lines में जुड़ती जाती हैं और totals व equality checks बिगाड़ देती हैं।",
+    "explanation": "Decimal128 और Int64 को हमेशा **strings** से बनाएँ (`NumberDecimal(\"19.99\")`, `NumberLong(\"9007199254740993\")`); JS number pass करने पर वो पहले Double से होकर convert होता है और precision खो सकता है। Mongoose में `Schema.Types.Decimal128` type इस्तेमाल करें।",
+    "followUps": [
+      "Decimal128 vs integer cents का trade-off क्या है?",
+      "Server पर type को enforce कैसे करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-id-rules",
+    "topic": "Documents and BSON",
+    "question": "_id field के नियम क्या हैं?",
+    "answer": "हर document में एक `_id` होना ज़रूरी है; अगर आप नहीं देते, तो एक **ObjectId generate हो जाता है**। ये collection में **unique** होना चाहिए (एक mandatory unique index से enforce होता है, जिसे drop नहीं किया जा सकता) और ये **immutable** है: जो update `_id` बदलने की कोशिश करे, वो fail हो जाता है। ये array को छोड़कर कोई भी BSON type हो सकता है (regex या undefined भी नहीं), इसलिए SKU string जैसी natural keys allowed हैं।",
+    "followUps": [
+      "किसी document का _id आप कैसे बदलेंगे?",
+      "ObjectId की जगह custom _id कब इस्तेमाल करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-16mb-limit",
+    "topic": "Documents and BSON",
+    "question": "MongoDB में maximum document size क्या है, और जब data इससे ज़्यादा होने वाला हो तो आप क्या करते हैं?",
+    "answer": "एक document ज़्यादा से ज़्यादा **16 MB** BSON का हो सकता है। आप इससे **unbounded growth** की वजह से टकराते हैं, जैसे हर review या event को एक ही document में embed करना। इसका इलाज modeling में बदलाव है: बढ़ते हुए data को reference के साथ उसकी अपनी collection में ले जाएँ (या उसे bucket करें), और videos या PDFs जैसी सच में बड़ी files के लिए **GridFS** इस्तेमाल करें।",
+    "explanation": "ये limit एक guard rail है। Performance आमतौर पर 16 MB से काफ़ी पहले ही गिरने लगती है, क्योंकि हर read पूरा document load करके भेजता है, चाहे UI को सिर्फ़ कुछ fields चाहिए हों।",
+    "followUps": [
+      "GridFS क्या है?",
+      "2 million reviews वाले product को आप कैसे store करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-schema-validation",
+    "topic": "Documents and BSON",
+    "question": "MongoDB schemaless है, तो आप data quality कैसे enforce करते हैं? validationLevel और validationAction समझाइए।",
+    "answer": "MongoDB का schema **flexible** है, ऐसा नहीं कि schema है ही नहीं: आप किसी collection पर **`$jsonSchema` validator** लगा सकते हैं ताकि server ग़लत writes reject कर दे, चाहे उन्हें कोई भी app या script भेजे। `validationLevel` तय करता है कि **कौन-से writes check होंगे**: `strict` (सभी inserts और updates), `moderate` (inserts और पहले से valid documents के updates) या `off`। `validationAction` तय करता है कि **failure पर क्या होगा**: `error` write को reject करता है, `warn` उसे होने देता है और एक warning log करता है।",
+    "explanation": "```js\ndb.runCommand({\n  collMod: \"products\",\n  validator: { $jsonSchema: { bsonType: \"object\", required: [\"sku\", \"price\"],\n    properties: { price: { bsonType: \"decimal\", minimum: 0 } } } },\n  validationLevel: \"moderate\",\n  validationAction: \"warn\"\n})\n```\nValidator जोड़ने पर existing documents दोबारा check नहीं होते। Safe rollout यह है: पहले warn, फिर data साफ़ करें, फिर strict + error।",
+    "followUps": [
+      "सिर्फ़ Mongoose validation पर भरोसा क्यों न करें?",
+      "जिस collection में पहले से ग़लत data है, उसमें validation कैसे जोड़ेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-documents-and-bson-mixed-types-scenario",
+    "topic": "Documents and BSON",
+    "question": "Scenario: आपकी sales report कुछ orders miss कर रही है और totals कुछ पैसों से ग़लत हैं। Orders collection में चार सालों में तीन अलग-अलग services ने लिखा है। आप क्या investigate करेंगे और इसे कैसे ठीक करेंगे?",
+    "answer": "मुझे **inconsistent BSON types** पर शक होगा: कुछ services ने `total` को Double के रूप में store किया, कुछ ने string के रूप में, और शायद dates भी strings में। `{ total: { $gt: 100 } }` जैसी query सिर्फ़ compatible types के बीच compare करती है, और string dates lexically sort होती हैं, इसलिए documents चुपचाप छूट जाते हैं; पैसों की गड़बड़ी Doubles की वजह से है। मैं `$type` queries से नुकसान नापूँगा, data को **Decimal128** और असली **Date** values में migrate करूँगा, फिर एक **`$jsonSchema` validator** जोड़ूँगा ताकि ये दोबारा न हो।",
+    "explanation": "```js\n// find the bad shapes\ndb.orders.countDocuments({ total: { $type: \"string\" } })\ndb.orders.countDocuments({ total: { $type: \"double\" } })\ndb.orders.countDocuments({ createdAt: { $type: \"string\" } })\n\n// fix them with an update pipeline\ndb.orders.updateMany(\n  { total: { $type: [\"string\", \"double\"] } },\n  [{ $set: { total: { $toDecimal: \"$total\" } } }]\n)\n```\nजिस Double में पहले से rounding error है, उसे convert करने से खोए हुए पैसे वापस नहीं आते, इसलिए जहाँ हो सके totals को line items से दोबारा calculate करें। फिर एक validator जोड़ें (`warn` से शुरू करें, फिर `error` पर जाएँ)।",
+    "followUps": [
+      "Numeric range query string values को skip क्यों कर देती है?",
+      "पुरानी services को तोड़े बिना validator कैसे roll out करेंगे?"
+    ]
+  }
+]

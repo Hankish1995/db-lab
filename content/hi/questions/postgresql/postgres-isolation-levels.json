@@ -1,0 +1,92 @@
+[
+  {
+    "slug": "postgres-isolation-levels-default",
+    "topic": "Isolation levels",
+    "question": "PostgreSQL का default isolation level कौन सा है और वो कैसे behave करता है?",
+    "answer": "**Read Committed**। हर **statement** एक fresh snapshot लेता है, इसलिए उसे वो सारा data दिखता है जो उस statement के शुरू होने से पहले commit हुआ था, और uncommitted data कभी नहीं दिखता। इसलिए एक ही transaction में दो एक जैसे SELECTs अलग-अलग results लौटा सकते हैं (non-repeatable reads और phantoms संभव हैं)।",
+    "followUps": [
+      "क्या PostgreSQL Read Uncommitted support करता है?",
+      "क्या Read Committed पर lost update हो सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-read-uncommitted",
+    "topic": "Isolation levels",
+    "question": "क्या READ UNCOMMITTED इस्तेमाल करके PostgreSQL में dirty read मिल सकता है?",
+    "answer": "नहीं। PostgreSQL `READ UNCOMMITTED` को syntax के तौर पर accept करता है, पर **उसे Read Committed की तरह चलाता है**। MVCC की वजह से हर read committed data का snapshot इस्तेमाल करता है, इसलिए हर level पर dirty reads नामुमकिन हैं।",
+    "followUps": [
+      "कौन से databases dirty reads होने देते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-set-level",
+    "topic": "Isolation levels",
+    "question": "PostgreSQL में isolation level कैसे set करते हैं?",
+    "answer": "हर transaction के लिए `BEGIN ISOLATION LEVEL SERIALIZABLE;` से, या transaction के **पहले** statement के रूप में `SET TRANSACTION ISOLATION LEVEL ...` से (किसी query के बाद ये error देता है)। हर session के लिए `SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ...` या `SET default_transaction_isolation` से। किसी database या role के default के रूप में `ALTER DATABASE shop SET default_transaction_isolation = 'repeatable read'` से। `SHOW transaction_isolation` से check करें।",
+    "followUps": [
+      "इसे globally की जगह per transaction set करना आमतौर पर बेहतर क्यों है?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-concurrent-update-rc",
+    "topic": "Isolation levels",
+    "question": "Read Committed पर दो transactions एक ही समय पर एक ही row को UPDATE करते हैं। ठीक-ठीक क्या होता है?",
+    "answer": "दूसरा UPDATE row lock पर तब तक **block** रहता है जब तक पहला commit या roll back न हो जाए। अगर पहला commit होता है, तो PostgreSQL **उस row का सबसे नया version** लेता है, उस पर **WHERE clause दोबारा evaluate** करता है, और update तभी apply करता है जब वो अब भी match करे, और SET expression नई values से compute करता है। इसीलिए `SET stock = stock - 1 WHERE stock > 0` safe है। चौंकाने वाली बात: ये सिर्फ़ उन rows को दोबारा check करता है जो उसके original snapshot में मिली थीं, इसलिए जो rows दूसरे commit के बाद नई-नई match करती हैं, वो छूट जाती हैं।",
+    "explanation": "Lesson demo: T1 prices की अदला-बदली करता है (Headphones 900→1100, Speaker 1100→900)। T2 साथ-साथ `UPDATE ... SET flagged = true WHERE price < 1000` चलाता है, wait करता है, Headphones (अब 1100) को दोबारा check करता है, उसे छोड़ देता है, और Speaker को कभी देखता ही नहीं: `UPDATE 0`, जबकि एक product हमेशा 1000 से कम था।",
+    "followUps": [
+      "Repeatable Read पर क्या होता?",
+      "आप इससे कैसे बचेंगे?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-repeatable-read",
+    "topic": "Isolation levels",
+    "question": "PostgreSQL में Repeatable Read कैसे काम करता है, और ये SQL standard से कैसे अलग है?",
+    "answer": "ये **snapshot isolation** है: transaction सारे reads के लिए एक ही snapshot इस्तेमाल करता है, जो उसकी पहली query पर लिया जाता है। इससे non-repeatable reads **और phantoms** दोनों रुकते हैं, जबकि standard इस level पर phantoms की इजाज़त देता है। अगर आप कोई ऐसी row update या lock करते हैं जिसे किसी दूसरे transaction ने आपके snapshot के बाद बदलकर commit किया, तो आपको `ERROR: could not serialize access due to concurrent update` (SQLSTATE 40001) मिलता है और retry करना पड़ता है, इसलिए lost updates नामुमकिन हैं। Write skew फिर भी संभव है।",
+    "followUps": [
+      "Write skew क्या है?",
+      "MySQL का Repeatable Read कैसे अलग है?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-write-skew",
+    "topic": "Isolation levels",
+    "question": "Write skew क्या है, और PostgreSQL का कौन सा isolation level इसे रोकता है?",
+    "answer": "Write skew तब होता है जब दो transactions **एक ही data** पढ़ते हैं, उसके आधार पर अपना-अपना फ़ैसला लेते हैं, और **अलग-अलग rows** लिखते हैं, और मिलकर ऐसा नियम तोड़ देते हैं जिसे किसी ने अकेले नहीं तोड़ा। उदाहरण: दो tabs दोनों check करते हैं कि cart 7 पर कोई coupon नहीं है और दोनों एक अलग coupon insert कर देते हैं। Repeatable Read दोनों को commit होने देता है क्योंकि कोई row दो बार नहीं लिखी गई; सिर्फ़ **Serializable** (SSI) read/write dependency पकड़कर एक को 40001 के साथ abort करता है। विकल्प: नियम को encode करने वाला constraint, या `FOR UPDATE` से किसी shared parent row को lock करना।",
+    "followUps": [
+      "Row locks इसे क्यों नहीं पकड़ते?",
+      "Unique constraint coupon वाले case को कैसे हल करेगा?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-ssi",
+    "topic": "Isolation levels",
+    "question": "PostgreSQL SERIALIZABLE को कैसे implement करता है? क्या ये सब कुछ lock कर देता है?",
+    "answer": "ये **Serializable Snapshot Isolation (SSI)** इस्तेमाल करता है: snapshot isolation plus **read/write dependencies** की tracking। Reads **predicate locks** (`SIReadLock`) लेते हैं जो किसी को **block नहीं करते**; जब कोई write ऐसी चीज़ को छूता है जिसे दूसरे transaction ने पढ़ा था, तो एक dependency record होती है, और अगर dependencies एक dangerous structure बनाती हैं (एक pivot transaction जिसकी incoming और outgoing दोनों rw-dependencies हों) तो एक transaction `could not serialize access due to read/write dependencies among transactions` (40001) के साथ abort होता है। तो कोई extra blocking नहीं है, पर aborts हैं, जिनमें कभी-कभी false positives भी होते हैं जब tracking मोटे स्तर की हो (जैसे Seq Scans पूरी relation को lock करते हैं)।",
+    "followUps": [
+      "अच्छे indexes serialization failures क्यों कम करते हैं?",
+      "READ ONLY DEFERRABLE क्या करता है?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-retry",
+    "topic": "Isolation levels",
+    "question": "Node.js application में serialization failures को कैसे handle करते हैं?",
+    "answer": "पूरे transaction को एक **retry loop** में लपेटें: SQLSTATE `40001` (और आमतौर पर `40P01` deadlock) पर `ROLLBACK` करें, exponential backoff plus jitter के साथ wait करें, और **BEGIN से सब कुछ** दोबारा चलाएँ, reads समेत, attempts की एक maximum संख्या तक। Transaction की हर query के लिए वही client इस्तेमाल करें और emails या payment calls जैसे side effects को retry होने वाले function के **बाहर** रखें, क्योंकि वो एक से ज़्यादा बार चल सकता है।",
+    "explanation": "```js\nfor (let attempt = 1; ; attempt++) {\n  const client = await pool.connect();\n  try {\n    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');\n    const result = await work(client);\n    await client.query('COMMIT');\n    return result;\n  } catch (err) {\n    await client.query('ROLLBACK').catch(() => {});\n    if (err.code !== '40001' || attempt === 5) throw err;\n    await sleep(2 ** attempt * 10 + Math.random() * 50);\n  } finally {\n    client.release();\n  }\n}\n```",
+    "followUps": [
+      "सिर्फ़ fail हुए statement को retry क्यों नहीं करते?",
+      "Payment step को retry के लिए safe कैसे बनाएँगे?"
+    ]
+  },
+  {
+    "slug": "postgres-isolation-levels-choose-scenario",
+    "topic": "Isolation levels",
+    "question": "Scenario: आप checkout, एक nightly revenue report और 'हर customer को हर महीने एक free-shipping voucher' वाला नियम बना रहे हैं। हर एक के लिए कौन सा isolation level इस्तेमाल करेंगे?",
+    "answer": "**Checkout**: atomic conditional updates (`UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1`) और constraints के साथ Read Committed; ये सबसे hot path है, इसलिए aborts से बचें। **Nightly report**: Repeatable Read, read only (या `SERIALIZABLE READ ONLY DEFERRABLE`), ताकि सारी queries एक consistent snapshot देखें। **Voucher नियम**: ये कई rows पर फैला है और classic write skew है, इसलिए या तो इसे constraint से enforce करें (जैसे customer और month पर unique index) या उस transaction को **retry loop के साथ Serializable** पर चलाएँ।",
+    "followUps": [
+      "Serializable को database का default बनाने का नुकसान क्या है?",
+      "लंबे report transactions VACUUM पर कैसे असर डालेंगे?"
+    ]
+  }
+]

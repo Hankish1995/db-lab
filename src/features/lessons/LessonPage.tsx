@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Clock, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clock, Languages, Zap } from 'lucide-react';
 import { Component, Suspense, use, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { LevelBadge } from '@/components/common/badges';
@@ -17,36 +17,45 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getLesson, getLessonQuestions, getTrackLessons, loadLessonContent } from '@/content';
+import { getLesson, getLessonQuestions, getTrackLessons, lessonText, loadLessonContent } from '@/content';
 import { StatusButtons } from '@/features/progress/StatusButtons';
 import { QuestionItem } from '@/features/questions/QuestionItem';
-import { TRACKS } from '@/types/content';
+import { useLocale, useT } from '@/i18n/locale';
+import { type Strings } from '@/i18n/strings';
+import { type Locale } from '@/types/content';
 
-/** The lesson text lives in its own chunk; `use` suspends until it has downloaded. */
-function LessonBody({ slug }: { slug: string }) {
-  const { body, recap } = use(loadLessonContent(slug));
+/** The lesson text lives in its own chunk per language; `use` suspends until it has downloaded. */
+function LessonBody({ slug, locale }: { slug: string; locale: Locale }) {
+  const t = useT();
+  const content = use(loadLessonContent(slug, locale));
+  const fellBack = locale !== content.locale;
   return (
-    <>
-      <Markdown>{body}</Markdown>
-      {recap && (
+    <div lang={content.locale} className="space-y-8">
+      {fellBack && (
+        <p lang={locale} className="flex items-center gap-2 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+          <Languages className="size-4 shrink-0" /> {t.lesson.notTranslated}
+        </p>
+      )}
+      <Markdown>{content.body}</Markdown>
+      {content.recap && (
         <Card className="border-emerald-500/40 bg-emerald-500/5">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Zap className="size-4 text-emerald-600" /> The 10-second recap
+            <CardTitle lang={locale} className="flex items-center gap-2 text-base">
+              <Zap className="size-4 text-emerald-600" /> {t.lesson.recap}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="leading-relaxed">{recap}</p>
+            <p className="leading-relaxed">{content.recap}</p>
           </CardContent>
         </Card>
       )}
-    </>
+    </div>
   );
 }
 
-function BodySkeleton() {
+function BodySkeleton({ label }: { label: string }) {
   return (
-    <div className="space-y-3" aria-busy="true" aria-label="Loading lesson">
+    <div className="space-y-3" aria-busy="true" aria-label={label}>
       <Skeleton className="h-7 w-1/3" />
       {Array.from({ length: 8 }, (_, i) => (
         <Skeleton key={i} className="h-4 w-full" />
@@ -56,7 +65,7 @@ function BodySkeleton() {
 }
 
 /** Shown if the lesson chunk can't be downloaded (e.g. offline, or a new deploy replaced old files). */
-class ChunkErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class ChunkErrorBoundary extends Component<{ children: ReactNode; t: Strings }, { failed: boolean }> {
   override state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -65,10 +74,11 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, { failed: bo
 
   override render() {
     if (!this.state.failed) return this.props.children;
+    const { t } = this.props;
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
-        <p className="font-medium text-destructive">This lesson couldn't be loaded.</p>
-        <p className="mt-1 text-muted-foreground">Check your connection, then reload the page.</p>
+        <p className="font-medium text-destructive">{t.lesson.loadFailed}</p>
+        <p className="mt-1 text-muted-foreground">{t.lesson.loadFailedHint}</p>
       </div>
     );
   }
@@ -76,15 +86,18 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, { failed: bo
 
 export function LessonPage() {
   const { slug = '' } = useParams();
+  const locale = useLocale();
+  const t = useT();
   const lesson = getLesson(slug);
   if (!lesson) return <NotFound />;
 
-  const track = TRACKS.find((t) => t.id === lesson.track);
+  const { title, summary } = lessonText(lesson, locale);
   const siblings = getTrackLessons(lesson.track);
   const index = siblings.findIndex((l) => l.slug === lesson.slug);
   const previous = index > 0 ? siblings[index - 1] : undefined;
   const next = index >= 0 ? siblings[index + 1] : undefined;
   const questions = getLessonQuestions(lesson.slug);
+  const shortTitle = (l: typeof lesson) => lessonText(l, locale).title.split(':')[0];
 
   return (
     <article className="space-y-8">
@@ -92,7 +105,7 @@ export function LessonPage() {
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link to={`/tracks/${lesson.track}`}>{track?.title}</Link>
+              <Link to={`/tracks/${lesson.track}`}>{t.tracks[lesson.track].title}</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -103,12 +116,12 @@ export function LessonPage() {
       </Breadcrumb>
 
       <header className="space-y-3">
-        <h1 className="text-3xl font-bold tracking-tight text-balance">{lesson.title}</h1>
-        <p className="text-lg text-muted-foreground">{lesson.summary}</p>
+        <h1 className="text-3xl font-bold tracking-tight text-balance">{title}</h1>
+        <p className="text-lg text-muted-foreground">{summary}</p>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <LevelBadge level={lesson.level} />
           <span className="inline-flex items-center gap-1">
-            <Clock className="size-3.5" /> {lesson.readingMinutes} min read
+            <Clock className="size-3.5" /> {t.lesson.minRead(lesson.readingMinutes)}
           </span>
           {lesson.tags.slice(0, 5).map((tag) => (
             <Badge key={tag} variant="outline" className="font-normal">
@@ -120,25 +133,23 @@ export function LessonPage() {
 
       <Separator />
 
-      {/* key: reset the boundary when navigating to another lesson. */}
-      <ChunkErrorBoundary key={lesson.slug}>
-        <Suspense fallback={<BodySkeleton />}>
-          <LessonBody slug={lesson.slug} />
+      {/* key: reset the boundary when switching lesson or language. */}
+      <ChunkErrorBoundary key={`${lesson.slug}:${locale}`} t={t}>
+        <Suspense fallback={<BodySkeleton label={t.lesson.loading} />}>
+          <LessonBody slug={lesson.slug} locale={locale} />
         </Suspense>
       </ChunkErrorBoundary>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
-        <p className="text-sm font-medium">How well do you know this lesson?</p>
+        <p className="text-sm font-medium">{t.lesson.howWell}</p>
         <StatusButtons kind="lesson" slug={lesson.slug} />
       </div>
 
       {questions.length > 0 && (
         <section className="space-y-3">
           <div>
-            <h2 className="text-xl font-semibold">Interview questions</h2>
-            <p className="text-sm text-muted-foreground">
-              Try answering out loud before opening each one.
-            </p>
+            <h2 className="text-xl font-semibold">{t.lesson.interviewQuestions}</h2>
+            <p className="text-sm text-muted-foreground">{t.lesson.tryAloud}</p>
           </div>
           <Accordion type="multiple" className="rounded-lg border px-4">
             {questions.map((q) => (
@@ -152,9 +163,9 @@ export function LessonPage() {
         {previous ? (
           <Link to={`/lessons/${previous.slug}`} className="group flex flex-col text-sm">
             <span className="inline-flex items-center gap-1 text-muted-foreground">
-              <ArrowLeft className="size-3.5" /> Previous
+              <ArrowLeft className="size-3.5" /> {t.lesson.previous}
             </span>
-            <span className="font-medium group-hover:underline">{previous.title.split(':')[0]}</span>
+            <span className="font-medium group-hover:underline">{shortTitle(previous)}</span>
           </Link>
         ) : (
           <span />
@@ -162,9 +173,9 @@ export function LessonPage() {
         {next && (
           <Link to={`/lessons/${next.slug}`} className="group flex flex-col items-end text-right text-sm">
             <span className="inline-flex items-center gap-1 text-muted-foreground">
-              Next <ArrowRight className="size-3.5" />
+              {t.lesson.next} <ArrowRight className="size-3.5" />
             </span>
-            <span className="font-medium group-hover:underline">{next.title.split(':')[0]}</span>
+            <span className="font-medium group-hover:underline">{shortTitle(next)}</span>
           </Link>
         )}
       </nav>

@@ -1,0 +1,96 @@
+[
+  {
+    "slug": "postgres-partitioning-what-is-it",
+    "topic": "Partitioning",
+    "question": "PostgreSQL में table partitioning क्या है और आप इसे क्यों use करेंगे?",
+    "answer": "Partitioning एक logical table को कई छोटी physical tables (**partitions**) में **उसी server पर** बाँटता है, जिन्हें `created_at` जैसी एक **partition key** तय करती है। आप फिर भी parent table पर query करते हैं और PostgreSQL rows को अपने-आप सही जगह भेजता है। मुख्य फ़ायदे हैं **सस्ता data retention** (बड़े `DELETE` की जगह पूरा महीना drop करो), छोटे VACUUMs और indexes, और key पर filter करने वाली queries के लिए **partition pruning**।",
+    "followUps": [
+      "Partitioning sharding से कैसे अलग है?",
+      "Partition pruning क्या है?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-range-list-hash",
+    "topic": "Partitioning",
+    "question": "PostgreSQL में declarative partitioning के तीन तरीके कौन से हैं, और हर एक कब use करते हैं?",
+    "answer": "**RANGE** value ranges से बाँटता है, आम तौर पर समय से (`orders` महीने के हिसाब से), और retention को आसान बनाता है। **LIST** region या status जैसी तय values से बाँटता है। **HASH** `MODULUS`/`REMAINDER` से rows को N partitions में बराबर फैलाता है, जो `customer_id` जैसे ID के लिए काम का है जब कोई natural range न हो। Range, ranges और equality पर prune करता है, list equality/`IN` पर, और hash सिर्फ़ equality पर।",
+    "explanation": "```sql\nCREATE TABLE orders (...) PARTITION BY RANGE (created_at);\nCREATE TABLE orders_2026_02 PARTITION OF orders\n  FOR VALUES FROM ('2026-02-01') TO ('2026-03-01'); -- lower inclusive, upper exclusive\n\nCREATE TABLE carts (...) PARTITION BY HASH (customer_id);\nCREATE TABLE carts_p0 PARTITION OF carts FOR VALUES WITH (MODULUS 4, REMAINDER 0);\n```",
+    "followUps": [
+      "Hash partitioning data retention के लिए बुरा क्यों है?",
+      "जो row किसी partition से match नहीं करती, उसका क्या होता है?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-vs-sharding",
+    "topic": "Partitioning",
+    "question": "Partitioning और sharding में क्या फ़र्क है?",
+    "answer": "**Partitioning** एक table को **उसी server पर** टुकड़ों में बाँटता है: इससे maintenance और pruning बेहतर होते हैं, लेकिन CPU, RAM या disk नहीं बढ़ते। **Sharding** data को **कई servers** पर फैलाता है, इसलिए storage और writes एक machine से आगे scale होते हैं, लेकिन routing, cross-shard queries और operational complexity की कीमत पर। PostgreSQL में partitioning built-in है; sharding के लिए Citus जैसी चीज़ या application-level routing चाहिए।",
+    "followUps": [
+      "और table inheritance इससे कैसे अलग है?",
+      "आप partitioning से sharding पर कब जाएँगे?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-pruning",
+    "topic": "Partitioning",
+    "question": "Partition pruning क्या है, और क्या यह parameterized queries के साथ काम करता है?",
+    "answer": "**Partition pruning** का मतलब है कि planner **partition key** पर लगी conditions के आधार पर उन partitions को skip कर देता है जिनमें matching rows हो ही नहीं सकतीं। `WHERE created_at >= '2026-02-10' AND created_at < '2026-02-11'` के साथ सिर्फ़ February partition scan होता है; `WHERE customer_id = 42` के साथ हर partition scan होता है। हाँ, यह parameters के साथ काम करता है: जब value सिर्फ़ run time पर पता चलती है (prepared statement का generic plan, या subquery से आई value), तब PostgreSQL **execution time पर** prune करता है, जो `EXPLAIN ANALYZE` में `Subplans Removed: N` के रूप में दिखता है।",
+    "explanation": "Pruning के लिए सीधा key column चाहिए। `WHERE date_trunc('month', created_at) = '2026-02-01'` prune नहीं कर सकता, इसलिए इसे `created_at` पर range के रूप में दोबारा लिखें।",
+    "followUps": [
+      "आप कैसे पक्का करेंगे कि pruning हुआ?",
+      "Key column पर function pruning को क्यों तोड़ सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-unique-constraints",
+    "topic": "Partitioning",
+    "question": "Partitioned table पर primary key या unique constraint में partition key शामिल होना क्यों ज़रूरी है?",
+    "answer": "PostgreSQL में **कोई global index नहीं** होता: partitioned table पर index असल में हर partition का एक अलग index होता है। हर index uniqueness सिर्फ़ **अपने partition के अंदर** check कर सकता है, इसलिए database global uniqueness की guarantee तभी दे सकता है जब partition key constraint का हिस्सा हो, यानी दो बराबर keys को एक ही partition में पहुँचना ही होगा। इसीलिए `created_at` से partitioned `orders` table `PRIMARY KEY (id, created_at)` use करती है।",
+    "explanation": "`PRIMARY KEY (id)` आज़माने पर यह error आता है: `unique constraint on partitioned table must include all partitioning columns`। Identity column व्यवहार में फिर भी unique values बनाता है, लेकिन database अब अकेले `id` को unique होने के लिए enforce नहीं करता।",
+    "followUps": [
+      "Partitioned table पर index concurrently कैसे बनाते हैं?",
+      "MongoDB sharding में यही सीमा कैसे है?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-drop-vs-delete",
+    "topic": "Partitioning",
+    "question": "एक बहुत बड़ी partitioned orders table से 12 महीने से पुराना data कैसे delete करेंगे?",
+    "answer": "Rows को `DELETE` न करें: इससे हर row के लिए WAL लिखा जाता है, millions dead tuples बचते हैं और भारी VACUUM का काम शुरू होता है। इसकी जगह पूरे partitions हटाएँ: `DROP TABLE orders_2025_01;` या, traffic block किए बिना archive करने के लिए, `ALTER TABLE orders DETACH PARTITION orders_2025_01 CONCURRENTLY;` और फिर उसे dump करके drop करें। Partition drop करना लगभग तुरंत होने वाला metadata operation है।",
+    "explanation": "`DETACH ... CONCURRENTLY` दो transactions में एक कमज़ोर lock लेता है ताकि queries चलती रहें। यह transaction block के अंदर नहीं चल सकता, table में default partition हो तो इसकी अनुमति नहीं है, और अगर बीच में रुक जाए तो आप इसे `DETACH PARTITION ... FINALIZE` से पूरा करते हैं। सादा `DETACH` और `DROP` parent पर ACCESS EXCLUSIVE lock लेते हैं।",
+    "followUps": [
+      "सादा DETACH कौन से locks लेता है?",
+      "Monthly partition बनाना और retention आप कैसे automate करेंगे?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-default-partition",
+    "topic": "Partitioning",
+    "question": "Default partition क्या है, और इसके नुकसान क्या हैं?",
+    "answer": "**Default partition** (`PARTITION OF orders DEFAULT`) उन rows को पकड़ता है जो किसी और partition से match नहीं करतीं; इसके बिना ऐसे inserts `no partition of relation found for row` के साथ fail होते हैं। नुकसान: नया partition बनाते समय **default को scan** करना पड़ता है ताकि पक्का हो कि उसकी कोई row नई range की नहीं है (और अगर कुछ हैं तो यह fail होता है), और default मौजूद रहते `DETACH PARTITION ... CONCURRENTLY` की अनुमति नहीं है। कई teams इसकी जगह partitions पहले से बना लेती हैं और insert failures पर alert लगाती हैं।",
+    "followUps": [
+      "यहाँ pg_partman कैसे मदद करता है?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-how-many",
+    "topic": "Partitioning",
+    "question": "कितने partitions बहुत ज़्यादा हैं, और granularity कैसे चुनें?",
+    "answer": "हर partition एक असली table है, अपने indexes और catalog entries के साथ, और planning cost partitions की गिनती के साथ बढ़ती है, ख़ासकर उन queries के लिए जो prune नहीं कर सकतीं। ज़्यादातर workloads के लिए दर्जनों से कुछ सौ partitions ठीक हैं; कुछ हज़ार तब चल सकते हैं जब लगभग हर query prune करे; दसियों हज़ार का मतलब है धीमी planning, हर connection पर ज़्यादा memory और lock pressure। Granularity data volume और retention से चुनें: **monthly** आम default है, daily सिर्फ़ बहुत ज़्यादा volume और छोटे retention के लिए। हर customer का एक partition कभी नहीं।",
+    "explanation": "इसे measure करें: `EXPLAIN (ANALYZE)` `Planning Time` दिखाता है। अगर आम queries में planning time execution time से ज़्यादा है, तो आपके पास बहुत ज़्यादा partitions हैं या ऐसी queries हैं जो key पर filter नहीं करतीं।",
+    "followUps": [
+      "अगर ज़्यादातर queries date की जगह customer_id से filter करती हों तो आप क्या करेंगे?"
+    ]
+  },
+  {
+    "slug": "postgres-partitioning-scenario-events-table",
+    "topic": "Partitioning",
+    "question": "Scenario: आपकी 800 GB की `order_events` table हर दिन 3 GB बढ़ती है, autovacuum कभी पीछा नहीं कर पाता, और 90 दिन से पुराने events delete करने वाला nightly job घंटों चलता है। आप क्या करेंगे?",
+    "answer": "यह **`created_at` पर RANGE partitioning** का textbook case है: daily या weekly partitions (लगभग 90–100 daily partitions ठीक हैं)। नए writes एक छोटे, hot partition पर जाते हैं; autovacuum छोटी tables पर काम करता है; और retention पूरे partitions को drop या detach करना बन जाता है, न कोई `DELETE`, न dead tuples। मैं check करूँगा कि मुख्य queries `created_at` पर filter करती हैं ताकि वे prune हों, primary key `(id, created_at)` बनाऊँगा, और partition बनाना और retention **pg_partman** या scheduled job से automate करूँगा।",
+    "explanation": "Migration का रास्ता: नई partitioned table बनाएँ, partitions बनाएँ, writes उस पर switch करें, पुराना data batches में backfill करें (या पुराने data को matching `CHECK` constraint के साथ partition के रूप में attach करें), फिर rename करें। अगर queries ज़्यादातर समय की जगह customer से filter करती हैं, तो समय से partitioning उन queries की मदद नहीं करेगा; हर partition पर `customer_id` index रखें।",
+    "followUps": [
+      "एक मौजूदा बड़ी table को कम से कम downtime के साथ partitioned table में कैसे migrate करेंगे?",
+      "अगर business को हर समय के लिए unique event_id चाहिए तो?"
+    ]
+  }
+]

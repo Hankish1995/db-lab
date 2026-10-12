@@ -4,8 +4,9 @@ import { EmptyState } from '@/components/common/states';
 import { Accordion } from '@/components/ui/accordion';
 import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { allQuestions } from '@/content';
+import { allQuestions, useHindiQuestions } from '@/content';
 import { statusOf, useProgress } from '@/features/progress/store';
+import { useLocale, useT } from '@/i18n/locale';
 import { TRACKS, type Difficulty, type TrackId } from '@/types/content';
 import { QuestionItem } from './QuestionItem';
 
@@ -20,6 +21,9 @@ export function QuestionsPage() {
   const search = params.get('q') ?? '';
 
   const progress = useProgress();
+  const locale = useLocale();
+  const t = useT();
+  const hindi = useHindiQuestions(locale);
 
   const setParam = (key: string, value: string) => {
     setParams(
@@ -42,7 +46,9 @@ export function QuestionsPage() {
     if (statusFilter === 'revise' && s !== 'revise') return false;
     if (statusFilter === 'known' && s !== 'known') return false;
     if (needle) {
-      const haystack = `${q.question} ${q.topic} ${q.tags.join(' ')}`.toLowerCase();
+      // Search English (technical terms) and, in Hindi mode, the Hindi wording too.
+      const hi = hindi?.[q.slug];
+      const haystack = `${q.question} ${q.topic} ${q.tags.join(' ')} ${hi ? hi.question : ''}`.toLowerCase();
       if (!haystack.includes(needle)) return false;
     }
     return true;
@@ -51,10 +57,8 @@ export function QuestionsPage() {
   return (
     <div className="space-y-6">
       <header className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Interview questions</h1>
-        <p className="text-muted-foreground">
-          Read the question, answer it out loud, then open it and compare. Mark what you know; revise the rest.
-        </p>
+        <h1 className="text-3xl font-bold tracking-tight">{t.questions.title}</h1>
+        <p className="text-muted-foreground">{t.questions.intro}</p>
       </header>
 
       <div className="space-y-3 rounded-lg border p-4">
@@ -63,38 +67,36 @@ export function QuestionsPage() {
           <Input
             value={search}
             onChange={(e) => setParam('q', e.target.value)}
-            placeholder="Search questions, topics, tags…"
+            placeholder={t.questions.search}
             className="pl-9"
-            aria-label="Search questions"
+            aria-label={t.questions.search}
           />
         </div>
-        <FilterRow label="Track" value={track} onChange={(v) => setParam('track', v)}>
-          <ToggleGroupItem value="all">All</ToggleGroupItem>
-          {TRACKS.map((t) => (
-            <ToggleGroupItem key={t.id} value={t.id}>
-              {t.title}
+        <FilterRow label={t.questions.track} value={track} onChange={(v) => setParam('track', v)}>
+          <ToggleGroupItem value="all">{t.questions.all}</ToggleGroupItem>
+          {TRACKS.map((tr) => (
+            <ToggleGroupItem key={tr.id} value={tr.id}>
+              {t.tracks[tr.id].title}
             </ToggleGroupItem>
           ))}
         </FilterRow>
-        <FilterRow label="Difficulty" value={difficulty} onChange={(v) => setParam('difficulty', v)}>
-          <ToggleGroupItem value="all">All</ToggleGroupItem>
-          <ToggleGroupItem value="easy">Easy</ToggleGroupItem>
-          <ToggleGroupItem value="medium">Medium</ToggleGroupItem>
-          <ToggleGroupItem value="hard">Hard</ToggleGroupItem>
+        <FilterRow label={t.questions.difficulty} value={difficulty} onChange={(v) => setParam('difficulty', v)}>
+          <ToggleGroupItem value="all">{t.questions.all}</ToggleGroupItem>
+          <ToggleGroupItem value="easy">{t.difficulty.easy}</ToggleGroupItem>
+          <ToggleGroupItem value="medium">{t.difficulty.medium}</ToggleGroupItem>
+          <ToggleGroupItem value="hard">{t.difficulty.hard}</ToggleGroupItem>
         </FilterRow>
-        <FilterRow label="Status" value={statusFilter} onChange={(v) => setParam('status', v)}>
-          <ToggleGroupItem value="all">All</ToggleGroupItem>
-          <ToggleGroupItem value="unanswered">Not marked</ToggleGroupItem>
-          <ToggleGroupItem value="revise">Revise</ToggleGroupItem>
-          <ToggleGroupItem value="known">Known</ToggleGroupItem>
+        <FilterRow label={t.questions.status} value={statusFilter} onChange={(v) => setParam('status', v)}>
+          <ToggleGroupItem value="all">{t.questions.all}</ToggleGroupItem>
+          <ToggleGroupItem value="unanswered">{t.questions.notMarked}</ToggleGroupItem>
+          <ToggleGroupItem value="revise">{t.status.revise}</ToggleGroupItem>
+          <ToggleGroupItem value="known">{t.status.known}</ToggleGroupItem>
         </FilterRow>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        {questions.length} of {allQuestions.length} questions
-      </p>
+      <p className="text-sm text-muted-foreground">{t.questions.count(questions.length, allQuestions.length)}</p>
       {questions.length === 0 ? (
-        <EmptyState title="No questions match these filters" />
+        <EmptyState title={t.questions.none} />
       ) : (
         <Accordion type="multiple" className="rounded-lg border px-4">
           {questions.map((q) => (
@@ -119,7 +121,7 @@ function FilterRow({
 }) {
   return (
     <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-      <span className="w-20 shrink-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <span className="w-24 shrink-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {label}
       </span>
       <ToggleGroup

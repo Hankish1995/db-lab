@@ -1,0 +1,70 @@
+[
+  {
+    "slug": "how-indexes-work-what-is-an-index",
+    "topic": "Indexes",
+    "question": "Database index क्या होता है और यह queries को तेज़ कैसे करता है?",
+    "answer": "Index एक **अलग, sorted data structure** होता है (आमतौर पर B-tree), जो एक या ज़्यादा columns की values को **rows तक के pointers** के साथ store करता है। हर row scan करने (O(n)) की जगह database tree पर चलकर **O(log n)** में matching keys तक पहुँचता है और सिर्फ़ वही rows fetch करता है। बिल्कुल किताब के पीछे वाले index की तरह: शब्द ढूँढो, सीधे उस page पर jump करो।",
+    "followUps": ["Index की आपको क्या कीमत चुकानी पड़ती है?", "PostgreSQL vs MySQL InnoDB में index entry किसकी ओर point करती है?"]
+  },
+  {
+    "slug": "how-indexes-work-btree",
+    "topic": "B-tree",
+    "question": "Databases indexes के लिए hash table या binary tree की जगह B-trees (B+trees) क्यों use करते हैं?",
+    "answer": "B+tree keys को **sorted** रखता है, इसलिए यह equality, **ranges**, prefix matches और **ORDER BY** support करता है, जो hash table नहीं कर सकती। हर node एक पूरा disk page होता है जिसमें सैकड़ों keys आती हैं, इसलिए **fan-out** बहुत बड़ा होता है और billions rows के लिए भी सिर्फ़ **3 से 4 levels** चाहिए, यानी 3 से 4 page reads, जबकि binary tree ~30 levels गहरा होता। Leaves key order में होती हैं, इसलिए range scan एक बार नीचे उतरता है और फिर sideways चलता है।",
+    "followUps": ["Hash index कब एक ठीक-ठाक choice होगा?", "Range query leaves पर कैसे चलती है?"]
+  },
+  {
+    "slug": "how-indexes-work-leftmost-prefix",
+    "topic": "Composite indexes",
+    "question": "आपके पास (customer_id, status, created_at) पर composite index है। कौन सी queries इसे efficiently use कर सकती हैं?",
+    "answer": "यह **leftmost-prefix rule** मानता है, जैसे last name फिर first name से sorted phone book। `customer_id`, `customer_id + status`, या तीनों पर filters इसे अच्छे से use करते हैं, और `WHERE customer_id = ? AND status = ? ORDER BY created_at` को तो sort भी index से ही मिल जाता है। सिर्फ़ `status` या सिर्फ़ `created_at` पर filter इसमें seek नहीं कर सकता, क्योंकि वे values पूरे index में बिखरी हुई हैं। **Equality columns पहले और range columns आख़िर में** रखें (MongoDB इसे ESR rule कहता है: Equality, Sort, Range)।",
+    "explanation": "कुछ engines (MySQL 8, B-trees के लिए PostgreSQL 18) leading column में distinct values कम होने पर **skip scan** कर सकते हैं, लेकिन indexes को इसके भरोसे design नहीं करना चाहिए।",
+    "followUps": ["Range column पहले रखना नुकसान क्यों करता है?", "क्या हर field पर अलग-अलग single-column indexes उतने ही अच्छे हैं?"]
+  },
+  {
+    "slug": "how-indexes-work-planner-ignores-index",
+    "topic": "Query planner",
+    "question": "जिस column पर आप filter कर रहे हैं उस पर index होने के बावजूद PostgreSQL उसे ignore क्यों कर सकता है?",
+    "answer": "**Selectivity** की वजह से: अगर condition rows के बड़े हिस्से से match करती है (जैसे `status = 'delivered'` जो 85% orders से match करे), तो index से हर row fetch करने का मतलब है ढेर सारे random reads, इसलिए **sequential scan** सस्ता पड़ता है और cost-based planner उसे चुनता है। Index तब भी ignore हो सकता है जब query उसे use ही न कर पाए: **column पर function**, **leading-wildcard LIKE**, column को cast करवाने वाला **type mismatch**, या बिना index वाली OR branch। Stale statistics से भी गलत estimates बन सकते हैं, इसलिए `ANALYZE` चलाना पहला check है।",
+    "followUps": ["Bitmap heap scan क्या है?", "जिस column में आप सिर्फ़ दुर्लभ value query करते हैं उसे आप कैसे index करेंगे?"]
+  },
+  {
+    "slug": "how-indexes-work-covering-index",
+    "topic": "Covering indexes",
+    "question": "Covering index / index-only scan क्या है?",
+    "answer": "Covering index में **query को चाहिए हर column** मौजूद होता है, इसलिए database table से rows fetch किए बिना सिर्फ़ index से जवाब दे देता है। PostgreSQL में यह **Index Only Scan** है, जो अक्सर `INCLUDE` columns से बनाया जाता है; MongoDB में यह **covered query** है, जो `totalDocsExamined: 0` के साथ `PROJECTION_COVERED` के रूप में दिखती है। इससे per-row lookup बच जाता है, जो index scan का महँगा हिस्सा है।",
+    "explanation": "```sql\nCREATE INDEX ON orders (customer_id) INCLUDE (total, created_at);\nSELECT created_at, total FROM orders WHERE customer_id = 42;\n```\nPostgreSQL caveat: index-only scans फिर भी visibility map देखते हैं और जो pages all-visible marked नहीं हैं उनके लिए heap पर जाते हैं (`Heap Fetches` के रूप में दिखता है)। MongoDB caveat: projection से `_id` को exclude करें, जब तक वह index में न हो।",
+    "followUps": ["Index-only scan में फिर भी heap fetches क्यों दिख सकते हैं?"]
+  },
+  {
+    "slug": "how-indexes-work-clustered-vs-heap",
+    "topic": "Storage",
+    "question": "Clustered index और heap table में क्या फ़र्क है? PostgreSQL और MySQL इसमें कैसे अलग हैं?",
+    "answer": "**Clustered** layout में table की rows **primary key के B+tree के अंदर** key के क्रम में stored होती हैं; MySQL InnoDB ऐसे ही काम करता है, और उसके secondary indexes **primary key value** store करते हैं, इसलिए secondary lookup को PK tree में दूसरी search करनी पड़ती है। PostgreSQL tables को **heap** की तरह किसी खास क्रम के बिना store करता है, और हर index, primary key समेत, row की physical location (tuple id) की ओर point करता है। PostgreSQL का `CLUSTER` command table को एक बार reorder करता है, लेकिन नई rows के लिए वह order बनाए नहीं रखता।",
+    "explanation": "InnoDB में नतीजा: UUIDv4 जैसी random primary keys insert पर page splits और fragmentation पैदा करती हैं, और चौड़ी primary key हर secondary index को बड़ा बना देती है। MongoDB (WiredTiger) documents को एक internal record id से store करता है और indexes, `_id` समेत, उसी की ओर point करते हैं; clustered collections एक optional feature है।",
+    "followUps": ["InnoDB में random UUID primary keys insert performance को नुकसान क्यों पहुँचाती हैं?"]
+  },
+  {
+    "slug": "how-indexes-work-index-not-used",
+    "topic": "Indexes",
+    "question": "ऐसे query patterns के उदाहरण दीजिए जो index use होने से रोकते हैं, और उन्हें कैसे fix करें।",
+    "answer": "**Column पर functions** (`WHERE lower(email) = ?`) के लिए expression index चाहिए। **Leading wildcard** (`LIKE '%phone'`) का कोई sorted starting point नहीं होता, इसलिए full-text search या trigram GIN index use करें। **Column पर arithmetic** (`created_at + interval '1 day' > now()`) को rewrite करें ताकि column अकेला रहे। Integer column को `5.0` से compare करने जैसा **type mismatch** column को cast कर देता है। ऐसा **OR** जिसकी एक branch indexed न हो, scan करवा देता है। MongoDB में unanchored या case-insensitive regexes index को efficiently use नहीं कर पाते।",
+    "explanation": "PostgreSQL detail: prefix match `LIKE 'abc%'` default B-tree को सिर्फ़ C collation के साथ use कर सकता है; वरना index को `text_pattern_ops` के साथ बनाएँ।",
+    "followUps": ["जब दोनों columns indexed हों तो PostgreSQL OR को कैसे handle करता है?"]
+  },
+  {
+    "slug": "how-indexes-work-cost-of-indexes",
+    "topic": "Indexes",
+    "question": "हर column को index ही क्यों न कर दें?",
+    "answer": "हर index **हर write** पर extra काम है: हर insert को हर index में entry जोड़नी पड़ती है, और updates को भी अक्सर ऐसा करना पड़ता है (**write amplification**)। Indexes **disk** भी लेते हैं और **memory** के लिए होड़ करते हैं (PostgreSQL का buffer cache, MongoDB का WiredTiger cache), और unused या duplicate indexes बिना किसी फ़ायदे के bulk loads धीमे करते हैं। अपनी असली queries के लिए index बनाएँ, और जो indexes use नहीं हो रहे उन्हें drop कर दें।",
+    "followUps": ["Unused indexes आप कैसे ढूँढेंगे?", "Partial index क्या है?"]
+  },
+  {
+    "slug": "how-indexes-work-scenario-slow-query",
+    "topic": "Indexes",
+    "question": "Scenario: 50M rows वाली orders table पर 'My orders' page (एक customer के orders, सबसे नए पहले, 20 per page) slow है। PostgreSQL और MongoDB में आप इसे कैसे diagnose और fix करेंगे, step by step बताइए।",
+    "answer": "पहले plan देखें: PostgreSQL में `EXPLAIN ANALYZE`, MongoDB में `explain('executionStats')`। **Seq Scan** / **COLLSCAN**, या `nReturned` से बहुत ज़्यादा `totalDocsExamined`, का मतलब है index missing है या गलत है; अलग sort step का मतलब है कि index order नहीं दे रहा। Fix है **पहले filter फिर sort** से match करता composite index: PostgreSQL में `(customer_id, created_at DESC)`, MongoDB में `{ customerId: 1, createdAt: -1 }`, ताकि database सीधे customer तक seek करे और पहले से sorted पहली 20 entries पढ़ ले। इसे writes block किए बिना बनाएँ (PostgreSQL में `CREATE INDEX CONCURRENTLY`), फिर plan दोबारा check करें और बड़ी OFFSET/skip values की जगह keyset pagination पर विचार करें।",
+    "explanation": "```sql\nCREATE INDEX CONCURRENTLY idx_orders_customer_created\n  ON orders (customer_id, created_at DESC);\n\nEXPLAIN ANALYZE\nSELECT * FROM orders\nWHERE customer_id = 42\nORDER BY created_at DESC\nLIMIT 20;\n```\n```js\ndb.orders.createIndex({ customerId: 1, createdAt: -1 })\ndb.orders.find({ customerId: 42 }).sort({ createdAt: -1 }).limit(20).explain('executionStats')\n```",
+    "followUps": ["Index होने के बावजूद OFFSET 100000 slow क्यों है?", "अगर page status से भी filter करे तो क्या?"]
+  }
+]

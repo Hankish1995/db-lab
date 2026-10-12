@@ -1,0 +1,62 @@
+[
+  {
+    "slug": "database-case-studies-design-approach",
+    "topic": "Case studies",
+    "question": "System design interview में database design के सवाल को आप कैसे approach करते हैं?",
+    "answer": "पहले **requirements** साफ़ करें (functional और non-functional), **back-of-the-envelope numbers** निकालें (read और write QPS, peak, storage), top **access patterns** list करें, फिर उन queries के इर्द-गिर्द **data model** और **keys/indexes** design करें। उसके बाद ही **database** चुनें और वजह बताएँ, **scaling plan** बताएँ (cache, replicas, partitioning, sharding), बताएँ कि क्या strongly और क्या eventually **consistent** होना चाहिए, और **failure modes** व trade-offs cover करें।",
+    "followUps": ["Entities के बजाय queries से शुरू क्यों करें?", "Daily users से QPS का अंदाज़ा कैसे लगाते हैं?"]
+  },
+  {
+    "slug": "database-case-studies-301-vs-302",
+    "topic": "URL shortener",
+    "question": "URL shortener में redirects के लिए 301 इस्तेमाल करें या 302?",
+    "answer": "**301 (permanent)** browsers और proxies को redirect cache करने देता है, इसलिए बार-बार के clicks शायद कभी आपके servers तक पहुँचें ही नहीं: load कम, पर click analytics खो जाते हैं। **302 या 307 (temporary)** हर click को आपकी service से होकर भेजता है: load ज़्यादा, analytics सटीक, और आप target बदल या expire कर सकते हैं। इस आधार पर चुनें कि analytics और control ज़्यादा मायने रखते हैं या load।",
+    "followUps": ["Hot row बनाए बिना आप clicks कैसे record करेंगे?", "Server-side redirects कैसे cache करते हैं?"]
+  },
+  {
+    "slug": "database-case-studies-url-id-generation",
+    "topic": "URL shortener",
+    "question": "URL shortener के लिए आप short codes कैसे generate करेंगे?",
+    "answer": "तीन विकल्प। **Base62 में encode किया counter**: कोई collisions नहीं और छोटा, पर codes का अंदाज़ा लगाया जा सकता है और counter को distributed होना होगा (हर server को ID ranges या Snowflake-style IDs)। URL का **hash**, 7 characters तक काटा हुआ: same URL से same code मिलता है, पर काटने से collisions होते हैं, इसलिए आप check और retry करते हैं। **Random** 7-character codes: अंदाज़ा नहीं लगाया जा सकता और कोई coordination नहीं; **unique constraint** पर भरोसा करें और कभी-कभार के collision पर retry करें। 62^7 ≈ 3.5 trillion codes, अरबों links के लिए काफ़ी।",
+    "followUps": ["आप counter ranges safely कैसे बाँटेंगे?", "Random codes के साथ collision की probability क्या है?"]
+  },
+  {
+    "slug": "database-case-studies-url-shortener-design",
+    "topic": "URL shortener",
+    "question": "हर महीने 100M नए links संभालने वाले URL shortener का data tier design करें।",
+    "answer": "Numbers: ~40 writes/s, average ~4,000 redirects/s (peak पर शायद 20,000), 5 साल में ~3 TB। Redirect `links(code)` पर एक **primary-key lookup** है, इसलिए कोई भी key-value-friendly store चलेगा: इस size पर PostgreSQL ठीक है; DynamoDB या Cassandra आसान horizontal scaling देते हैं। Traffic बहुत skewed है, इसलिए hot `code → url` pairs को **Redis** में और CDN पर cache करें, ज़रूरत हो तो replicas जोड़ें, और अगर एक primary छोटा पड़े तो `hash(code)` से shard करें। Counter row increment करने के बजाय click events को queue में भेजें और analytics store में aggregate करें।",
+    "followUps": ["आप custom aliases कैसे support करेंगे?", "Links expire कैसे करेंगे?"]
+  },
+  {
+    "slug": "database-case-studies-prevent-overselling",
+    "topic": "Checkout & inventory",
+    "question": "E-commerce checkout में inventory की overselling आप कैसे रोकेंगे?",
+    "answer": "Check और decrement **एक atomic conditional statement** में करें: `UPDATE inventory SET available = available - 1 WHERE product_id = 42 AND available >= 1`; zero affected rows का मतलब sold out (MongoDB: `updateOne({ _id, available: { $gte: 1 } }, { $inc: { available: -1 } })`)। लंबे checkouts के लिए, checkout शुरू होते ही expiry के साथ stock **reserve** करें और expired reservations को background job से छोड़ें, और reservations को conditional update से confirm करें ताकि देर से आया payment किसी expired reservation को confirm न कर सके। कभी भी stock पढ़कर, app code में फ़ैसला करके, फिर write न करें।",
+    "explanation": "Safety net के तौर पर `CHECK (available >= 0)` constraint जोड़ें, और pessimistic (`SELECT ... FOR UPDATE`) व optimistic (version column) विकल्पों के लिए concurrency lesson देखें।",
+    "followUps": ["Atomic decrement vs reservation: कौन बेहतर customer experience देता है?", "अगर payment reservation expire होने के बाद पूरा हो तो?"]
+  },
+  {
+    "slug": "database-case-studies-flash-sale-hot-row",
+    "topic": "Checkout & inventory",
+    "question": "Scenario: एक flash sale में एक SKU पर हर second 3,000 checkout attempts आते हैं, और inventory row bottleneck बन जाती है। आप क्या करेंगे?",
+    "answer": "उस row का हर update पिछले के commit होने का इंतज़ार करता है, इसलिए throughput एक row के lock-update-commit cycle से बँधा है। Transaction को **बहुत छोटा** रखें (उसके अंदर कोई network calls नहीं), आगे एक atomic **Redis `DECR` gate** लगाएँ ताकि ज़्यादातर हारने वाले जल्दी लौटा दिए जाएँ जबकि source of truth database ही रहे, stock को **N sub-counters** में बाँटें और किसी random bucket को decrement करें, या buyers को **queue** में डालकर क्रम से process करें। साथ ही हर user के reservations की limit रखें ताकि bots stock जमा न कर सकें।",
+    "explanation": "सिद्धांत: correctness database में एक atomic conditional write से आती है; caches, gates और queues बस यह कम करते हैं कि कितनी requests वहाँ तक पहुँचें।",
+    "followUps": ["Redis gate और database को consistent कैसे रखेंगे?", "Sub-counters आखिरी कुछ units को कैसे संभालेंगे?"]
+  },
+  {
+    "slug": "database-case-studies-chat-data-model",
+    "topic": "Chat",
+    "question": "हर दिन 2 billion messages वाले chat app के messages आप कैसे store करेंगे?",
+    "answer": "यह ~23,000 writes/s और ~400 GB/day है: write-heavy, append-only और विशाल। **`conversation_id` से partition करें** (time से bucketed ताकि partitions सीमित रहें), sort key के रूप में **time-ordered message IDs** (Snowflake/ULID/`timeuuid`) इस्तेमाल करें, और **cursor** (`message_id < ?`) से paginate करें, कभी `OFFSET` से नहीं। Cassandra या ScyllaDB जैसे wide-column stores अच्छे बैठते हैं: सस्ते LSM appends, partition के अंदर sorted rows, linear write scaling। मध्यम scale पर MongoDB `{ conversationId: 1, _id: -1 }` पर index और conversation से शुरू होने वाली shard key के साथ चलता है, चाहें तो **bucket pattern** (एक document में कई messages) के साथ।",
+    "explanation": "```sql\n-- CQL\nCREATE TABLE messages (\n  conversation_id uuid, bucket int, message_id timeuuid,\n  sender_id uuid, body text,\n  PRIMARY KEY ((conversation_id, bucket), message_id)\n) WITH CLUSTERING ORDER BY (message_id DESC);\n```\nConversation list को user से keyed अपनी अलग table चाहिए, क्योंकि wide-column tables हर query के हिसाब से design की जाती हैं।",
+    "followUps": ["User ID से partition क्यों नहीं?", "100,000 members वाले group chat को आप कैसे संभालेंगे?"]
+  },
+  {
+    "slug": "database-case-studies-feed-fan-out",
+    "topic": "Social feed",
+    "question": "Social feed के लिए fan-out on write vs fan-out on read: celebrities को आप कैसे संभालेंगे?",
+    "answer": "**Fan-out on write** हर नए post ID को हर follower के पहले से बने feed में डालता है (जैसे एक capped Redis sorted set): reads सस्ते हैं, पर writes follower count से गुणा हो जाते हैं। **Fan-out on read** request के समय followed users के recent posts merge करके feed बनाता है: writes सस्ते, reads महँगे। 50M followers वाला celebrity fan-out on write को फुला देता है, इसलिए **hybrid** इस्तेमाल करें: normal accounts के लिए fan out करें, celebrities के लिए fan-out छोड़ दें, और उनके recent posts read के समय merge करें। Inactive users को भी छोड़ दें और feeds में सिर्फ़ post IDs store करें।",
+    "explanation": "मोटे numbers: 10M posts/day × औसतन 200 followers ≈ 2B feed inserts/day (~23k/s), जबकि 100M users × 10 feed loads ≈ 1B reads/day (~12k/s)। Hybrid दोनों कीमतों को सीमित रखता है।",
+    "followUps": ["पहले से बने feeds के साथ deletes और unfollows कैसे संभालेंगे?", "Ranking कहाँ होगी?"]
+  }
+]

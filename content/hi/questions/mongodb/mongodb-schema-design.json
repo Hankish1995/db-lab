@@ -1,0 +1,82 @@
+[
+  {
+    "slug": "mongodb-schema-design-golden-rule",
+    "topic": "Schema design",
+    "question": "MongoDB schema design का मुख्य सिद्धांत क्या है, और ये SQL से कैसे अलग है?",
+    "answer": "**जो data साथ में access होता है, उसे साथ में store करना चाहिए।** SQL में आप पहले entity के हिसाब से normalize करते हैं और बाद में joins से कोई भी सवाल हल करते हैं। MongoDB में आप **workload** से शुरू करते हैं: frequent queries की list बनाते हैं और documents को ऐसा shape देते हैं कि हर hot query **एक document** पढ़े। उदाहरण के लिए, product page product details, variants और specs पढ़ता है, इसलिए ये सब product document में embedded होते हैं।",
+    "followUps": [
+      "क्या एक जैसी entities को दो apps में अलग-अलग schemas की ज़रूरत पड़ सकती है?",
+      "Queries के लिए design करने की cost क्या है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-embed-vs-reference",
+    "topic": "Schema design",
+    "question": "Embedding और referencing के बीच आप कैसे फ़ैसला करते हैं?",
+    "answer": "**Embed** तब करें जब data छोटा हो, **bounded** हो, parent के साथ पढ़ा जाता हो, और उसके साथ atomic updates से फ़ायदा हो (user में addresses)। **Reference** तब करें जब data बड़ा हो, **unbounded** हो, कई parents में shared हो, अपने-आप में update होता हो या अक्सर अकेले query होता हो (किसी product के reviews)। Embedding से एक read और single-document atomicity मिलती है; referencing से छोटे documents और कोई duplication नहीं मिलता, लेकिन दूसरी query या `$lookup` चाहिए।",
+    "followUps": [
+      "अगर आप एक unbounded array embed कर दें तो क्या होता है?",
+      "$lookup इस फ़ैसले पर कैसे असर डालता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-one-to-squillions",
+    "topic": "Schema design",
+    "question": "ऐसे one-to-many relationship को आप कैसे model करेंगे जिसमें 'many' वाली तरफ़ लाखों तक बढ़ सकती है, जैसे किसी product के reviews या page views?",
+    "answer": "**Child-to-parent referencing** इस्तेमाल करें: हर review `productId` store करता है, और reviews अपनी collection में रहते हैं, जिस पर `{ productId: 1, createdAt: -1 }` index है। Product में reviews का array (या review IDs का भी) **unbounded** होगा, जिससे हर update एक बढ़ते हुए document को दोबारा लिखेगा और आख़िरकार **16 MB** limit से टकराएगा। फिर product page एक सस्ती indexed query से reviews को page करता है।",
+    "explanation": "आम refinement: कुछ latest reviews को product में भी embed करें (subset pattern) और `ratingAvg`/`ratingCount` पहले से calculate करके रखें (computed pattern), ताकि product page को अब भी सिर्फ़ एक read चाहिए।",
+    "followUps": [
+      "Reviews scan किए बिना average rating कैसे दिखाएँगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-order-price-duplication",
+    "topic": "Schema design",
+    "question": "क्या हर order में product name और price copy करना ग़लत है? क्या ये duplication नहीं है?",
+    "answer": "ये duplication है, और ये **सही** है। Order एक **historical snapshot** है: अगर अगले महीने price बदल जाए, तब भी order, invoice और refund logic को वही इस्तेमाल करना चाहिए जो customer ने असल में pay किया था। Live product को reference करने से ग़लत price दिखेगा। General नियम: वो data duplicate करें जो **अक्सर पढ़ा जाता है और कभी-कभार बदलता है**, या जिसे **समय में freeze** रहना है, और stock counts जैसा तेज़ी से बदलने वाला data कभी duplicate न करें।",
+    "followUps": [
+      "Duplicated data को कब sync में रखना पड़ेगा, और कैसे?",
+      "क्या आप shipping address भी copy करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-many-to-many",
+    "topic": "Schema design",
+    "question": "Products और categories जैसे many-to-many relationship को आप कैसे model करेंगे?",
+    "answer": "**उस तरफ़ references का array store करें जो छोटी रहती है**: हर product में `categoryIds: [\"men\", \"summer\"]` हो, और उस पर एक **multikey index** हो। फिर \"category X के products\" बस `find({ categoryIds: \"x\" })` है। हर category में भी `productIds` array न रखें, क्योंकि वो तरफ़ unbounded है और आपको दोनों तरफ़ sync में रखनी पड़ेंगी।",
+    "followUps": [
+      "अगर दोनों तरफ़ बड़ी हो सकती हैं, जैसे scale पर students और courses, तो?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-lookup-cost",
+    "topic": "Schema design",
+    "question": "MongoDB में $lookup है। तो SQL की तरह सब कुछ normalize करके join क्यों न करें?",
+    "answer": "`$lookup` काम करता है, लेकिन ये हर read पर एक extra stage है: हर input document के लिए server को दूसरी collection में matches ढूँढने पड़ते हैं, जिसके लिए **foreign field पर index** चाहिए, और **sharded** clusters में ये और महँगा हो जाता है। MongoDB की ताक़त है hot path का जवाब **एक document** से, एक index lookup में देना। Reports और admin screens के लिए `$lookup` इस्तेमाल करें; अगर आपके सबसे ज़्यादा खुलने वाले page को इसकी ज़रूरत है, तो schema ने साथ में access होने वाले data को अलग कर दिया है।",
+    "followUps": [
+      "$lookup को कौन-सा index चाहिए?",
+      "कब relational database सीधे-सीधे बेहतर choice है?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-anti-patterns",
+    "topic": "Schema design",
+    "question": "MongoDB schema के कुछ आम anti-patterns बताइए।",
+    "answer": "**Unbounded arrays** (हर review या log एक ही document में), **बहुत सारी collections** (हर दिन या हर tenant की एक), **ग़ैर-ज़रूरी indexes** जो writes धीमे करते हैं और RAM खाते हैं, **हमेशा साथ पढ़े जाने वाले data को अलग करना** (हर page पर `$lookup` करवाना), कम पढ़े जाने वाले data से भरे **फूले हुए documents**, और stock levels जैसे **तेज़ी से बदलने वाले fields को duplicate करना**।",
+    "followUps": [
+      "Production में unbounded array का पता कैसे लगाएँगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-schema-design-ecommerce-scenario",
+    "topic": "Schema design",
+    "question": "Scenario: users, products, orders, reviews और inventory वाले एक e-commerce store का MongoDB schema design कीजिए। हर फ़ैसले को justify कीजिए।",
+    "answer": "मैं queries से शुरू करता हूँ: product page, add to cart/checkout, my orders, reviews list, stock updates। **users** अपने कुछ addresses embed करते हैं। **products** variants और specs embed करते हैं, `categoryIds` रखते हैं, और पहले से calculate किए `ratingAvg`/`ratingCount` store करते हैं (और शायद कुछ latest reviews भी), ताकि product page एक read में बन जाए। **orders** `userId` को reference करते हैं, लेकिन product name, price, qty और shipping address **copy** करते हैं, क्योंकि order एक historical snapshot है। **reviews** की अपनी collection है जिसमें `productId` है (unbounded), और **inventory** अलग है, हर warehouse में हर product का एक document, क्योंकि ये write-hot है और इसे हर sale पर product documents दोबारा नहीं लिखने चाहिए।",
+    "explanation": "Queries से निकलने वाले indexes:\n```js\ndb.orders.createIndex({ userId: 1, createdAt: -1 })     // my orders\ndb.reviews.createIndex({ productId: 1, createdAt: -1 }) // reviews page\ndb.products.createIndex({ categoryIds: 1, price: 1 })   // category listing\ndb.inventory.createIndex({ productId: 1, warehouseId: 1 }, { unique: true })\n```\nStock घटाने के लिए conditional atomic update इस्तेमाल होता है (filter में `{ qty: { $gte: n } }`); order place करना और stock घटाना साथ में करने के लिए transaction इस्तेमाल किया जा सकता है।",
+    "followUps": [
+      "ratingAvg को सही कैसे रखेंगे?",
+      "Cart को आप कहाँ रखेंगे?",
+      "अगर किसी product पर 5 million reviews आ जाएँ तो क्या बदलेगा?"
+    ]
+  }
+]

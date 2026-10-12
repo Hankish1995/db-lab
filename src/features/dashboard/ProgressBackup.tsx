@@ -3,9 +3,11 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { exportProgress, importProgress, resetProgress } from '@/features/progress/store';
+import { useT } from '@/i18n/locale';
 
 /** Progress lives in this browser only, so offer a file backup and a reset. */
 export function ProgressBackup() {
+  const t = useT();
   const fileInput = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
@@ -13,18 +15,20 @@ export function ProgressBackup() {
     if (!file) return;
     try {
       const count = await importProgress(file);
-      setMessage({ kind: 'ok', text: `Imported ${count} progress entries.` });
-    } catch (error) {
-      setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Could not read that file.' });
+      setMessage(
+        count > 0 ? { kind: 'ok', text: t.backup.imported(count) } : { kind: 'error', text: t.backup.empty },
+      );
+    } catch {
+      setMessage({ kind: 'error', text: t.backup.unreadable });
     } finally {
       if (fileInput.current) fileInput.current.value = '';
     }
   };
 
   const onReset = () => {
-    if (window.confirm('Clear all your progress in this browser? This cannot be undone (export a backup first).')) {
+    if (window.confirm(t.backup.confirmReset)) {
       resetProgress();
-      setMessage({ kind: 'ok', text: 'Progress cleared.' });
+      setMessage({ kind: 'ok', text: t.backup.cleared });
     }
   };
 
@@ -32,23 +36,20 @@ export function ProgressBackup() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <HardDrive className="size-4" /> Your progress
+          <HardDrive className="size-4" /> {t.backup.title}
         </CardTitle>
-        <CardDescription>
-          Saved in this browser only. Clearing site data removes it, so export a backup now and then; import it to
-          restore progress or move it to another browser.
-        </CardDescription>
+        <CardDescription>{t.backup.description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={exportProgress}>
-            <Download /> Export backup
+            <Download /> {t.backup.export}
           </Button>
           <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-            <Upload /> Import backup
+            <Upload /> {t.backup.import}
           </Button>
           <Button variant="ghost" size="sm" className="text-destructive" onClick={onReset}>
-            <Trash2 /> Reset
+            <Trash2 /> {t.backup.reset}
           </Button>
           <input
             ref={fileInput}

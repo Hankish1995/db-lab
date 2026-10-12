@@ -1,0 +1,76 @@
+[
+  {
+    "slug": "postgres-data-types-and-constraints-money-type",
+    "topic": "Data types",
+    "question": "Prices और order totals के लिए आप कौन-सा PostgreSQL type इस्तेमाल करेंगे, और float क्यों नहीं?",
+    "answer": "**`numeric(p,s)`** इस्तेमाल कीजिए, जैसे `numeric(12,2)`, जो exact decimals store करता है, या speed के लिए **integer minor units** (`amount_paise bigint`) store कीजिए। Floats binary approximations हैं: PostgreSQL में `0.1::float8 + 0.2::float8` `0.30000000000000004` लौटाता है और 0.3 के बराबर नहीं होता, और ये errors sums में जमा होते जाते हैं, जिससे totals और ledgers मेल खाना बंद कर देते हैं।",
+    "followUps": ["numeric(10,2) value 19.999 के साथ क्या करता है?", "Stripe जैसी payment APIs integer amounts क्यों इस्तेमाल करती हैं?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-text-vs-varchar",
+    "topic": "Data types",
+    "question": "PostgreSQL में text इस्तेमाल करें या varchar(255)?",
+    "answer": "PostgreSQL में `text`, `varchar` और `varchar(n)` एक ही तरह store होते हैं और performance भी एक जैसी है; `varchar(n)` बस एक length check जोड़ता है। इसलिए default रूप से **`text`** इस्तेमाल कीजिए और असली business limits को `CHECK (length(col) <= n)` से express कीजिए, जिसे बाद में बदलना आसान है। `varchar(255)` की आदत MySQL से आई है, जहाँ ऐतिहासिक रूप से इसका फ़र्क़ पड़ता था।",
+    "followUps": ["char(n) से क्यों बचना चाहिए?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-timestamptz",
+    "topic": "Data types",
+    "question": "timestamp और timestamptz में क्या अंतर है, और कौन-सा इस्तेमाल करना चाहिए?",
+    "answer": "**`timestamptz`** एक absolute instant दर्शाता है: input UTC में बदला जाता है और output session के `TimeZone` में। **`timestamp`** बिना zone वाली घड़ी की date और time है, और input में कोई भी offset चुपचाप फेंक दिया जाता है। `created_at` और `paid_at` जैसे events के लिए **`timestamptz`** इस्तेमाल कीजिए, instants store कीजिए, और UI में user के local time में convert कीजिए।",
+    "explanation": "नाम के बावजूद timestamptz ख़ुद time zone store नहीं करता। एक ही value Asia/Kolkata session में `09:00+05:30` और UTC session में `03:30+00` दिखती है; instant वही है।",
+    "followUps": ["सादा timestamp या date कब सही choice है?", "Node.js का pg driver timestamptz को कैसे लौटाता है?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-unique-nulls",
+    "topic": "Constraints",
+    "question": "एक table में UNIQUE (code, user_id) है, फिर भी ('WELCOME', NULL) वाली दो rows insert हो गईं। क्यों, और आप इसे कैसे रोकेंगे?",
+    "answer": "Default रूप से PostgreSQL unique constraints में **NULLs को distinct** मानता है: NULL का मतलब unknown है, और दो unknowns बराबर नहीं माने जाते, इसलिए दोनों rows की इजाज़त है। PostgreSQL 15 से आप `UNIQUE NULLS NOT DISTINCT (code, user_id)` declare कर सकते हैं, जो NULLs को बराबर मानता है। विकल्प: column को `NOT NULL` बनाइए, या `CREATE UNIQUE INDEX ON coupon_uses (code) WHERE user_id IS NULL` जैसा partial unique index इस्तेमाल कीजिए।",
+    "followUps": ["Default NULLS DISTINCT behaviour असल में कब वही होता है जो आप चाहते हैं?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-foreign-key-actions",
+    "topic": "Constraints",
+    "question": "ON DELETE CASCADE, RESTRICT और SET NULL समझाइए। orders, order_items और reviews के लिए आप कौन-सा इस्तेमाल करेंगे?",
+    "answer": "**RESTRICT / NO ACTION** (default) ऐसे parent को delete करने से रोकता है जिसके children अभी मौजूद हैं। **CASCADE** parent के साथ children को भी delete कर देता है। **SET NULL** child को रखता है और उसकी foreign key को NULL कर देता है। E-commerce schema के लिए: `orders.user_id` → RESTRICT (order history रखनी है), `order_items.order_id` → CASCADE (items order का ही हिस्सा हैं), `reviews.user_id` → SET NULL (review रखो, author को anonymous कर दो)।",
+    "explanation": "NO ACTION और RESTRICT में फ़र्क़ सिर्फ़ timing का है: NO ACTION statement के अंत में check करता है और commit तक defer किया जा सकता है; RESTRICT तुरंत check करता है।",
+    "followUps": ["users → orders पर CASCADE ख़तरनाक क्यों है?", "क्या PostgreSQL आपके लिए foreign key column को index करता है?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-fk-index",
+    "topic": "Constraints",
+    "question": "क्या PostgreSQL foreign key columns पर अपने-आप index बनाता है? अगर आप न जोड़ें तो क्या होता है?",
+    "answer": "नहीं। PostgreSQL को **referenced** columns (आमतौर पर primary key) पर unique index चाहिए, लेकिन वह **referencing** column, जैसे `orders.user_id`, को index **नहीं** करता। उसके बिना users से orders के joins orders table को scan करते हैं, और `users` पर हर delete या key update को references check करने के लिए `orders` scan करना पड़ता है, जो बहुत धीमा हो जाता है और locks ज़्यादा देर तक रखता है। इसे ख़ुद बनाइए: `CREATE INDEX ON orders (user_id)`।",
+    "explanation": "`order_items (order_id, product_id)` जैसी composite primary key अपने leftmost column के रूप में `order_id` को पहले से cover करती है, लेकिन `product_id` को फिर भी अपना index चाहिए।",
+    "followUps": ["आप बिना supporting index वाली foreign keys कैसे ढूँढेंगे?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-identity-vs-serial",
+    "topic": "Data types",
+    "question": "serial और identity column में क्या अंतर है?",
+    "answer": "दोनों एक sequence से ids बनाते हैं। **`serial`** PostgreSQL का एक पुराना shorthand है जो sequence default वाला एक `integer` column बनाता है। **`GENERATED ALWAYS AS IDENTITY`** इसका SQL-standard विकल्प है: sequence column से बँधा होता है, और `ALWAYS` हाथ से दी गई values को reject करता है जब तक आप `OVERRIDING SYSTEM VALUE` न लिखें, इसलिए imports sequence से टकरा नहीं सकते। `bigint GENERATED ALWAYS AS IDENTITY` को प्राथमिकता दीजिए।",
+    "followUps": ["Ids में gaps क्यों हो सकते हैं?", "आप इसकी जगह, या इसके साथ, UUID कब इस्तेमाल करेंगे?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-enum-vs-lookup",
+    "topic": "Data modeling",
+    "question": "आप किसी order के status को values के एक तय set तक कैसे सीमित करेंगे: enum, CHECK constraint या lookup table?",
+    "answer": "**Enum** compact (4 bytes) और type-safe है, और values जोड़ना आसान है, लेकिन values हटाई नहीं जा सकतीं और वे declaration order से sort होती हैं। `text` पर **CHECK (status IN (...))** simple है और constraint बदलकर आसानी से बदला जा सकता है। **Foreign key वाली lookup table** तब सबसे अच्छी है जब business list edit करता हो या हर status को metadata चाहिए (label, sort order, is_final)। छोटे, stable set के लिए मैं CHECK या enum इस्तेमाल करूँगा; जो भी editable हो, उसके लिए lookup table।",
+    "followUps": ["Enum पर WHERE status > 'paid' क्या करता है?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-db-vs-app-validation",
+    "topic": "Constraints",
+    "question": "आपकी team सब कुछ Mongoose/Zod में validate करती है और पूछती है कि PostgreSQL में भी constraints क्यों जोड़ें। आपका तर्क क्या है?",
+    "answer": "App validation **एक code path** को बचाता है; constraints **हर writer** को बचाते हैं: दूसरी services, cron jobs, migrations, हाथ से किए fixes। कुछ नियम app code में सही तरीक़े से enforce हो ही नहीं सकते: 'पहले check करो कि email ख़ाली है, फिर insert करो' एक **race condition** है, जबकि unique index concurrency-safe है; FKs और overlap rules (EXCLUDE) के साथ भी यही बात है। Constraints write वाले transaction के अंदर ही चलते हैं, इसलिए data के valid होने की guarantee होती है। Friendly, जल्दी मिलने वाले errors के लिए app validation रखिए और database errors को SQLSTATE से map कीजिए (`23505` unique, `23503` FK, `23514` check)।",
+    "followUps": ["100M-row वाली live table पर CHECK constraint सुरक्षित तरीक़े से कैसे जोड़ेंगे?", "Mongoose का unique: true असल में क्या करता है?"]
+  },
+  {
+    "slug": "postgres-data-types-and-constraints-exclude",
+    "topic": "Constraints",
+    "question": "आप कैसे guarantee करेंगे कि किसी product के दो promotions कभी overlap न करें, concurrent inserts के दौरान भी?",
+    "answer": "Period को range (`tstzrange`) के रूप में store कीजिए और एक **exclusion constraint** जोड़िए: `EXCLUDE USING gist (product_id WITH =, active_during WITH &&)`। यह हर उस नई row को reject करता है जिसका product किसी मौजूदा row के बराबर हो और range उससे overlap करे। `btree_gist` extension चाहिए ताकि GiST bigint पर `=` संभाल सके। App में check-then-insert के उलट, यह constraint index enforce करता है, इसलिए दो concurrent inserts दोनों सफल नहीं हो सकते।",
+    "explanation": "```sql\nCREATE EXTENSION IF NOT EXISTS btree_gist;\nCREATE TABLE promotions (\n  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  product_id bigint NOT NULL REFERENCES products (id),\n  active_during tstzrange NOT NULL,\n  EXCLUDE USING gist (product_id WITH =, active_during WITH &&)\n);\n```\n`[2026-11-20, 2026-11-30)` जैसी ranges half-open होती हैं, इसलिए एक के ठीक बाद शुरू होने वाले promotions आपस में conflict नहीं करते।",
+    "followUps": ["आप exclusion constraint और कहाँ इस्तेमाल करेंगे (bookings, delivery slots)?"]
+  }
+]

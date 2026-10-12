@@ -1,0 +1,71 @@
+[
+  {
+    "slug": "postgres-ctes-and-window-functions-where-vs-having",
+    "topic": "GROUP BY",
+    "question": "WHERE और HAVING में क्या अंतर है, और FILTER clause क्या करता है?",
+    "answer": "**WHERE** grouping से **पहले** अलग-अलग rows को filter करता है; **HAVING** aggregation के **बाद** पूरे groups को filter करता है, इसलिए यह `count(*) > 1000` जैसे aggregates इस्तेमाल कर सकता है। **FILTER** किसी एक aggregate पर condition लगाता है, ताकि आप एक ही pass में कई conditional aggregates निकाल सकें: सादे `count(*)` के बगल में `count(*) FILTER (WHERE status = 'cancelled')`।",
+    "followUps": ["आप FILTER वाला example बिना FILTER के कैसे लिखेंगे?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-window-vs-group-by",
+    "topic": "Window functions",
+    "question": "Window function क्या है और यह GROUP BY से कैसे अलग है?",
+    "answer": "**Window function** current row से related rows के एक set पर value निकालता है, जिसे `OVER (PARTITION BY ... ORDER BY ...)` define करता है, और **हर row को बनाए रखता है**। **GROUP BY** हर group को एक row में समेट देता है। उदाहरण: `sum(total) OVER (PARTITION BY user_id)` हर order के साथ user का कुल ख़र्च दिखाता है, जो अकेला GROUP BY वापस join किए बिना नहीं कर सकता।",
+    "followUps": ["क्या आप WHERE में window function इस्तेमाल कर सकते हैं?", "WHERE, GROUP BY, window functions और ORDER BY किस क्रम में evaluate होते हैं?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-rank-functions",
+    "topic": "Window functions",
+    "question": "ROW_NUMBER, RANK और DENSE_RANK में क्या अंतर है?",
+    "answer": "Values 120, 120, 90 के लिए: **ROW_NUMBER** 1, 2, 3 देता है (हमेशा unique; tie-breaker न जोड़ें तो ties मनमाने ढंग से टूटते हैं), **RANK** 1, 1, 3 देता है (ties एक rank share करते हैं, फिर gap), **DENSE_RANK** 1, 1, 2 देता है (ties एक rank share करते हैं, कोई gap नहीं)। Deduplication और top-N के लिए ROW_NUMBER, competition जैसी rankings के लिए RANK, और 'Nth सबसे ऊँची distinct value' के लिए DENSE_RANK इस्तेमाल कीजिए।",
+    "followUps": ["हर user का दूसरा सबसे बड़ा order total कैसे निकालेंगे?", "ROW_NUMBER दो runs में अलग results क्यों दे सकता है?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-cte-materialization",
+    "topic": "CTEs",
+    "question": "क्या PostgreSQL में CTEs एक optimization fence हैं?",
+    "answer": "Default रूप से अब नहीं। **PostgreSQL 12** से, एक non-recursive, side-effect-free CTE जो **एक बार** reference हो, main query में **inline** हो जाता है, ताकि planner filters को उसके अंदर push कर सके और indexes इस्तेमाल कर सके। जो CTE **एक से ज़्यादा बार** reference हो, वह materialize होता है (एक बार compute होकर store)। आप `WITH x AS MATERIALIZED (...)` या `AS NOT MATERIALIZED` से कोई भी behaviour force कर सकते हैं। 12 से पहले हर CTE materialize होता था, 'fence' वाली बदनामी वहीं से आई है।",
+    "explanation": "Practice में: `WITH big AS (SELECT * FROM orders WHERE total > 500) SELECT * FROM big WHERE id = 4242` एक primary-key index scan बन जाता है; `MATERIALIZED` जोड़ते ही यह एक full scan बन जाता है जो CTE Scan को data देता है।",
+    "followUps": ["आप जान-बूझकर MATERIALIZED कब इस्तेमाल करेंगे?", "INSERT/UPDATE/DELETE वाले CTEs का क्या?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-recursive-cte",
+    "topic": "CTEs",
+    "question": "parent_id column के साथ stored पूरा category tree आप कैसे fetch करेंगे?",
+    "answer": "एक **recursive CTE** से: एक **anchor** query शुरुआती rows select करती है (जैसे top-level categories या कोई एक category), फिर `UNION ALL` के साथ एक **recursive term** जो `categories` को CTE से `c.parent_id = tree.id` पर join करता है। PostgreSQL नई मिली rows पर recursive term तब तक दोहराता है जब तक कोई नई row न बने। Ordering के लिए एक `depth` या `path` column साथ लेकर चलिए और cycle guard जोड़िए: depth limit, visited-path check, या `CYCLE` clause (PostgreSQL 14+)।",
+    "explanation": "```sql\nWITH RECURSIVE tree AS (\n  SELECT id, name, 1 AS depth FROM categories WHERE parent_id IS NULL\n  UNION ALL\n  SELECT c.id, c.name, t.depth + 1\n  FROM categories c JOIN tree t ON c.parent_id = t.id\n)\nSELECT * FROM tree;\n```",
+    "followUps": ["अगर data में cycle हो तो क्या होगा?", "Trees store करने के और कौन-से विकल्प हैं (closure table, ltree)?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-month-over-month",
+    "topic": "Window functions",
+    "question": "आप SQL में month-over-month revenue growth और running total कैसे निकालेंगे?",
+    "answer": "पहले हर महीने की एक row तक aggregate कीजिए (`date_trunc('month', created_at)` और `sum(total)` वाला CTE), फिर month से ordered window functions लगाइए: पिछले महीने के लिए `LAG(revenue) OVER (ORDER BY month)`, growth के लिए `(revenue - prev) / NULLIF(prev, 0)`, और running total के लिए `SUM(revenue) OVER (ORDER BY month)`। नाम वाला `WINDOW w AS (ORDER BY month)` window को बार-बार लिखने से बचाता है।",
+    "explanation": "बिना orders वाले महीनों से सावधान रहिए: उनकी rows होती ही नहीं, इसलिए LAG किसी पुराने महीने से तुलना कर लेता है। जब gaps संभव हों, तो `generate_series` से पूरी month series बनाकर उससे LEFT JOIN कीजिए।",
+    "followUps": ["उसी महीने के लिए year-over-year growth कैसे निकालेंगे?", "LEAD किसलिए इस्तेमाल होता है?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-frames",
+    "topic": "Window functions",
+    "question": "Window frame क्या है, और ROWS और RANGE में क्या अंतर है?",
+    "answer": "**Frame** partition का वह हिस्सा है जो current row के लिए इस्तेमाल होता है, जैसे 7-row moving average के लिए `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW`। **ROWS** physical rows गिनता है; **RANGE** values पर काम करता है, इसलिए बराबर ORDER BY values वाली rows (peers) एक साथ शामिल होती हैं, और यह `INTERVAL '6 days' PRECEDING` जैसे offsets भी लेता है। ORDER BY हो और frame न हो, तो default `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` होता है, इसीलिए running totals ties पर छलाँग लगाते हैं और `LAST_VALUE` current row लौटाता है।",
+    "explanation": "Values 10, 20, 20, 30 के लिए `sum(x) OVER (ORDER BY x)` 10, 50, 50, 80 देता है, जबकि `ROWS UNBOUNDED PRECEDING` 10, 30, 50, 80 देता है।",
+    "followUps": ["जब कुछ दिनों में कोई order न हो, तब 7-day moving average कैसे निकालेंगे?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-top-n-per-group",
+    "topic": "Window functions",
+    "question": "हर customer के 3 सबसे हाल के orders के लिए query लिखिए। बड़ी table पर कौन-सा तरीक़ा तेज़ है?",
+    "answer": "Option 1: subquery में `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC)`, फिर बाहर `WHERE rn <= 3` (window functions WHERE में नहीं जा सकते)। Option 2: `CROSS JOIN LATERAL (SELECT ... WHERE user_id = u.id ORDER BY created_at DESC LIMIT 3)`। `(user_id, created_at DESC)` पर index हो, तो LATERAL हर user के लिए एक छोटा index scan करता है और 3 rows के बाद रुक जाता है, इसलिए जब users के बहुत orders हों तो यह जीतता है; window version हर order पढ़ता है लेकिन उसे per-user lookups नहीं चाहिए और यह ties और complex rankings अच्छी तरह संभालता है।",
+    "explanation": "500k-order वाली test table पर (हर user के लगभग 10 orders, warm cache) window version में लगभग 620 ms लगे और LATERAL में लगभग 240 ms। PostgreSQL 15+ WindowAgg में एक `Run Condition` जोड़ता है ताकि rn के 3 पार करते ही numbering रुक जाए, लेकिन यह फिर भी सारी input rows पढ़ता है।",
+    "followUps": ["अगर ties भी शामिल करने हों (3rd place share करने वाले सारे orders) तो?", "LATERAL version में बिना orders वाले users को कैसे रखेंगे?"]
+  },
+  {
+    "slug": "postgres-ctes-and-window-functions-node-report-scenario",
+    "topic": "Window functions",
+    "question": "एक Node.js endpoint 200,000 orders memory में load करता है ताकि हर category के revenue के हिसाब से top 5 products का leaderboard बना सके, उनकी rank और category revenue में हिस्सेदारी के साथ। आप इसे कैसे redesign करेंगे?",
+    "answer": "इसे एक SQL query में ले आइए। एक CTE `order_items` को `products` से join करके हर product का revenue aggregate करता है (हर product की एक row, fan-out से बचते हुए)। फिर उस result पर window functions: rank के लिए `RANK() OVER (PARTITION BY category_id ORDER BY revenue DESC)` और हिस्सेदारी के लिए `revenue / sum(revenue) OVER (PARTITION BY category_id)`। बाहरी query में `rank <= 5` filter कीजिए। Database 200,000 की जगह कुछ दर्जन rows लौटाता है, और अगर फिर भी भारी हो, तो इसे एक materialized view में पहले से compute कर लीजिए जो schedule पर refresh हो।",
+    "explanation": "```sql\nWITH product_revenue AS (\n  SELECT p.category_id, p.id, p.name, sum(oi.line_total) AS revenue\n  FROM order_items oi JOIN products p ON p.id = oi.product_id\n  GROUP BY p.category_id, p.id, p.name\n), ranked AS (\n  SELECT *,\n    RANK() OVER (PARTITION BY category_id ORDER BY revenue DESC) AS rnk,\n    round(100 * revenue / sum(revenue) OVER (PARTITION BY category_id), 1) AS pct\n  FROM product_revenue\n)\nSELECT * FROM ranked WHERE rnk <= 5 ORDER BY category_id, rnk;\n```",
+    "followUps": ["यहाँ RANK या ROW_NUMBER, और क्यों?", "order_items के बढ़ने पर आप इसे तेज़ कैसे रखेंगे?"]
+  }
+]

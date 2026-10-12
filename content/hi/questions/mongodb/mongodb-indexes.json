@@ -1,0 +1,103 @@
+[
+  {
+    "slug": "mongodb-indexes-why-and-cost",
+    "topic": "MongoDB indexes",
+    "question": "MongoDB में index क्या करता है, और उसकी cost क्या है?",
+    "answer": "Index **field values का एक sorted B-tree है, जिसमें documents के pointers होते हैं**, इसलिए MongoDB पूरी collection scan करने (`COLLSCAN`) की जगह सीधे matching documents पर jump (`IXSCAN`) कर सकता है, और results पहले से sorted लौटा सकता है। Cost: हर insert, delete और indexed field के हर update को index भी update करना पड़ता है, इसलिए **writes धीमे होते हैं**; indexes **disk और RAM** भी इस्तेमाल करते हैं, और hot indexes memory में fit होने चाहिए।",
+    "followUps": [
+      "हर collection पर default में कौन-सा index होता है?",
+      "एक collection में कितने indexes हो सकते हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-esr-rule",
+    "topic": "MongoDB indexes",
+    "question": "ESR rule क्या है? find({ status: \"paid\", total: { $gte: 100 } }).sort({ createdAt: -1 }) के लिए index design कीजिए।",
+    "answer": "Compound index के fields का order **Equality, फिर Sort, फिर Range** रखें। यहाँ: `{ status: 1, createdAt: 1, total: 1 }` (createdAt 1 या -1 कुछ भी हो सकता है, index को पीछे की ओर भी walk किया जा सकता है)। Equality एक ऐसे हिस्से तक सीमित करती है जो पहले से date से sorted है, और total पर range उसी के अंदर filter होती है। E-R-S order `{ status: 1, total: 1, createdAt: 1 }` एक **in-memory SORT** करवाता है, क्योंकि \"paid\" के अंदर entries total से ordered हैं, date से नहीं।",
+    "explanation": "50,000-order वाली test collection पर `.limit(20)` के साथ मापा गया:\n- E-R-S: `IXSCAN → SORT → FETCH`, **8,000** keys examined।\n- E-S-R: `IXSCAN → FETCH → LIMIT`, **23** keys examined, कोई sort stage नहीं।",
+    "followUps": [
+      "E-R-S कब बेहतर choice हो सकता है?",
+      "क्या यहाँ index में createdAt की direction मायने रखती है?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-prefix-rule",
+    "topic": "MongoDB indexes",
+    "question": "आपके पास { status: 1, createdAt: 1 } पर एक index है। कौन-सी queries इसे efficiently इस्तेमाल कर सकती हैं?",
+    "answer": "इसके **prefixes** पर queries: `{ status }` और `{ status, createdAt }`, जिसमें `status` equality के साथ `createdAt` पर sort या range भी शामिल है। **सिर्फ़ `createdAt`** पर query इसमें efficiently seek नहीं कर सकती, क्योंकि dates हर status value में फैली हुई हैं। इसका मतलब ये भी है कि एक अलग `{ status: 1 }` index **redundant** है और drop किया जा सकता है।",
+    "followUps": [
+      "क्या ये index sort({ status: 1, createdAt: -1 }) को support कर सकता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-explain-output",
+    "topic": "MongoDB indexes",
+    "question": "कोई query अच्छे से indexed है या नहीं, ये जानने के लिए आप explain(\"executionStats\") कैसे पढ़ते हैं?",
+    "answer": "`winningPlan` में **IXSCAN** (COLLSCAN नहीं) और **कोई SORT stage नहीं** ढूँढें (in-memory sort एक red flag है)। फिर `totalKeysExamined`, `totalDocsExamined` और `nReturned` की तुलना करें: आदर्श रूप से ये लगभग **1:1:1** होने चाहिए। Docs examined का nReturned से बहुत ज़्यादा होना मतलब index filter को cover नहीं करता; keys का बहुत ज़्यादा होना मतलब index का order ठीक नहीं है; `PROJECTION_COVERED` के साथ `totalDocsExamined: 0` मतलब covered query।",
+    "followUps": [
+      "अगर keys examined 0 हो और docs examined collection size के बराबर हो, तो इसका क्या मतलब है?",
+      "In-memory sort की memory limit क्या है?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-covered-query",
+    "topic": "MongoDB indexes",
+    "question": "Covered query क्या है, और कोई query अक्सर covered क्यों नहीं हो पाती?",
+    "answer": "**Covered query** का जवाब **पूरी तरह index से** मिलता है: filter और projection का हर field index में है, इसलिए कोई document fetch नहीं होता (`totalDocsExamined: 0`, stage `PROJECTION_COVERED`)। ये fail होने की आम वजह **`_id`** है: ये default में return होता है, इसलिए जब तक आप `_id: 0` project न करें (या `_id` index में न हो), MongoDB को हर document FETCH करना पड़ता है। Array (multikey) fields भी आमतौर पर covered नहीं हो सकते।",
+    "explanation": "```js\ndb.orders.createIndex({ status: 1, createdAt: 1 })\ndb.orders.find({ status: \"paid\" }, { _id: 0, status: 1, createdAt: 1 }) // covered\ndb.orders.find({ status: \"paid\" }, { status: 1, createdAt: 1 })         // FETCH for _id\n```",
+    "followUps": [
+      "क्या किसी query को cover करने के लिए index में और fields जोड़ना हमेशा अच्छा idea होगा?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-unique-partial-sparse",
+    "topic": "MongoDB indexes",
+    "question": "Users बिना email के भी sign up कर सकते हैं, लेकिन email मौजूद हो तो unique होना चाहिए। Plain unique index fail क्यों होता है, और आप क्या इस्तेमाल करेंगे?",
+    "answer": "Plain unique index **missing field को null के रूप में** store करता है, इसलिए बिना email वाला **दूसरा** user duplicate-key error trigger कर देता है। **Unique partial index** इस्तेमाल करें: `createIndex({ email: 1 }, { unique: true, partialFilterExpression: { email: { $exists: true } } })`, जो सिर्फ़ उन documents को index करता है (और उन्हीं पर uniqueness enforce करता है) जिनमें email है। आमतौर पर **sparse की जगह partial** indexes को तरजीह दें: partial कोई भी filter expression स्वीकार करता है, और sparse पुराना, कम flexible feature है।",
+    "followUps": [
+      "Query planner partial index कब इस्तेमाल करेगा?",
+      "Email uniqueness को case-insensitive कैसे बनाएँगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-ttl-multikey",
+    "topic": "MongoDB indexes",
+    "question": "TTL indexes कैसे काम करते हैं, और multikey indexes की मुख्य limitation क्या है?",
+    "answer": "**TTL index** किसी **Date** field पर `expireAfterSeconds` के साथ बना एक single-field index है; एक background task expired documents को लगभग **हर 60 seconds** में हटाता है, इसलिए expiry तुरंत नहीं होती (per-document expiry के लिए `expiresAt` field पर `expireAfterSeconds: 0` इस्तेमाल करें)। **Multikey index** अपने-आप बन जाता है जब किसी indexed field में array हो, हर element की एक entry के साथ; **compound** index में, किसी document में ज़्यादा से ज़्यादा **एक** indexed field array हो सकता है, वरना inserts \"cannot index parallel arrays\" के साथ fail हो जाते हैं।",
+    "followUps": [
+      "जिन documents में TTL field नहीं है, उनका क्या होता है?",
+      "MongoDB एक index में parallel arrays की इजाज़त क्यों नहीं देता?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-unused-indexes",
+    "topic": "MongoDB indexes",
+    "question": "Production में unused indexes को आप कैसे ढूँढेंगे और safely हटाएँगे?",
+    "answer": "`$indexStats` चलाएँ (`db.orders.aggregate([{ $indexStats: {} }])`) और `accesses.ops` देखें, जो **server start होने या index बनने के बाद से, सिर्फ़ उसी member पर** हुए इस्तेमाल गिनता है, इसलिए हर replica set member को काफ़ी लंबे समय तक check करें। **Redundant prefixes** भी ढूँढें। फिर candidate को `hideIndex()` से **hide** करें: planner उसे ignore करता है लेकिन वो maintain होता रहता है, इसलिए अगर performance गिरे तो आप rebuild की जगह तुरंत `unhideIndex()` कर देते हैं; अगर सब ठीक रहे, तो उसे drop कर दें।",
+    "followUps": [
+      "क्या hidden index अब भी writes को धीमा करता है?",
+      "आप _id index को hide क्यों नहीं कर सकते?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-slow-query-scenario",
+    "topic": "MongoDB indexes",
+    "question": "Scenario: 'My orders' page (किसी user के orders, सबसे नए पहले, हर page पर 20) तब धीमा हो गया जब orders collection 50 million documents तक बढ़ गई। बताइए कि आप इसे कैसे diagnose और fix करेंगे।",
+    "answer": "पहले **profiler** या slow query logs में exact query ढूँढें, फिर उसे **`explain(\"executionStats\")`** के साथ चलाएँ। मुझे `COLLSCAN` की उम्मीद होगी, या `userId` पर `IXSCAN` के बाद एक in-memory **`SORT`**, जिसमें `totalDocsExamined` `nReturned` से बहुत ज़्यादा हो। इलाज एक ESR index है, `{ userId: 1, createdAt: -1 }`: user पर equality, फिर sort, ताकि MongoDB क्रम से ठीक 20 entries पढ़े और रुक जाए। Explain दोबारा चलाकर confirm करें कि IXSCAN है, कोई SORT नहीं, और लगभग 20 keys / 20 docs / 20 returned हैं, और deep `skip` paging की जगह `createdAt` और `_id` पर range-based paging लगाएँ।",
+    "explanation": "ये भी check करें:\n- Index एक live collection पर बन रहा है; modern builds सिर्फ़ शुरुआत और अंत में थोड़ी देर lock लेते हैं, लेकिन फिर भी I/O इस्तेमाल करते हैं, इसलिए कोई शांत समय चुनें।\n- क्या कोई existing `{ userId: 1 }` index redundant हो जाता है और drop किया जा सकता है।\n- क्या projection ऐसे बड़े fields लौटा रहा है जिनकी page को ज़रूरत नहीं।\n```js\ndb.orders.createIndex({ userId: 1, createdAt: -1 })\ndb.orders.find({ userId: uid, createdAt: { $lt: lastSeen } })\n         .sort({ createdAt: -1 }).limit(20)\n```",
+    "followUps": [
+      "Skip के बिना results में page कैसे करेंगे?",
+      "अगर page status से भी filter करे तो?"
+    ]
+  },
+  {
+    "slug": "mongodb-indexes-index-builds",
+    "topic": "MongoDB indexes",
+    "question": "क्या किसी बड़ी, व्यस्त production collection पर index बनाना safe है?",
+    "answer": "ज़्यादातर हाँ, सावधानी के साथ। Modern MongoDB index builds build की **शुरुआत और अंत में सिर्फ़ थोड़ी देर के लिए exclusive lock** लेते हैं; बीच में reads और writes चलते रहते हैं। लेकिन build **पूरी collection scan करता है**, CPU, I/O और memory खाता है, और replica set पर ये data-bearing members पर चलता है और काफ़ी members के पूरा करने पर commit होता है। इसलिए बड़े builds कम traffic वाले समय में schedule करें, replication lag और cache pressure पर नज़र रखें, और एक साथ कई बड़े indexes बनाने से बचें।",
+    "followUps": [
+      "Build के दौरान आने वाले writes का क्या होता है?",
+      "Index build की progress कैसे check करेंगे?"
+    ]
+  }
+]

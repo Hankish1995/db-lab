@@ -1,0 +1,68 @@
+[
+  {
+    "slug": "cap-and-pacelc-what-is-cap",
+    "topic": "CAP theorem",
+    "question": "CAP theorem क्या है?",
+    "answer": "CAP कहता है कि जब कोई **network partition** distributed system को बाँट देता है, तो उसे **Consistency** (हर read सबसे recent write देखे, यानी linearizability) और **Availability** (किसी non-failed node पर आई हर request को non-error response मिले) में से एक चुनना पड़ता है। Data कई machines पर हो, तो partition tolerance optional नहीं रहता, इसलिए असली चुनाव है **partition के दौरान CP या AP**। जब network ठीक है, तो आपको दोनों मिल सकते हैं।",
+    "followUps": ["'3 में से 2 चुनो' गुमराह करने वाला क्यों है?", "एक CP और एक AP system का उदाहरण दीजिए।"]
+  },
+  {
+    "slug": "cap-and-pacelc-what-is-a-partition",
+    "topic": "CAP theorem",
+    "question": "Network partition क्या होता है?",
+    "answer": "**Network partition** तब होता है जब distributed system के nodes चल तो रहे होते हैं लेकिन एक-दूसरे से **बात नहीं कर पाते**, क्योंकि messages खो जाते हैं या delay हो जाते हैं। यह crash से अलग है: दोनों तरफ़ ज़िंदा हैं और client requests लेते रह सकते हैं, इसलिए हर तरफ़ को तय करना पड़ता है कि जवाब दे (stale या conflicting data का risk लेकर) या मना कर दे (availability खोकर)। वजहें हैं switch failures, ग़लत configure किए firewalls, cloud zone issues और लंबे pauses जो network loss जैसे दिखते हैं।",
+    "followUps": ["जब primary majority से partitioned हो जाए, तो MongoDB कैसे behave करता है?"]
+  },
+  {
+    "slug": "cap-and-pacelc-why-not-ca",
+    "topic": "CAP theorem",
+    "question": "Distributed database बस 'CA' क्यों नहीं हो सकता?",
+    "answer": "क्योंकि partitions ऐसी चीज़ नहीं जिन्हें आप चुनते हैं; किसी भी multi-node system में network आख़िरकार messages drop या delay **करेगा ही**। P छोड़ने का मतलब होगा यह मान लेना कि network कभी fail नहीं होता, जो realistic नहीं है। इसलिए trade-off सिर्फ़ partition के दौरान सामने आता है, और वह है C बनाम A। जो system सच में 'CA' है, वह असल में एक **single node** है, जिसमें replicas के बीच कोई partition नहीं, लेकिन कोई fault tolerance भी नहीं।",
+    "followUps": ["एक single PostgreSQL server CP है या AP?", "CAP की availability का असली मतलब क्या है?"]
+  },
+  {
+    "slug": "cap-and-pacelc-pacelc",
+    "topic": "PACELC",
+    "question": "PACELC क्या है और यह CAP से ज़्यादा काम का क्यों है?",
+    "answer": "**PACELC** कहता है: अगर **P**artition है, तो **A**vailability या **C**onsistency चुनो; **E**lse, यानी normal operation में, **L**atency या **C**onsistency चुनो। यह ज़्यादा काम का है क्योंकि partitions कम होते हैं, लेकिन replicas का इंतज़ार करने की latency की क़ीमत **हर** request पर चुकानी पड़ती है। उदाहरण के लिए, MongoDB write को `w: 1` से acknowledge करना तेज़ है लेकिन failover में खो सकता है, जबकि `w: 'majority'` एक round trip जोड़ता है लेकिन failover में बच जाता है।",
+    "followUps": ["Async replication इस्तेमाल करने वाले system को आप कैसे classify करेंगे?", "PACELC किसने propose किया?"]
+  },
+  {
+    "slug": "cap-and-pacelc-consistency-models",
+    "topic": "Consistency models",
+    "question": "आम consistency models को सबसे strong से सबसे weak तक समझाइए।",
+    "answer": "**Linearizable**: हर read latest write को real-time order में देखता है, जैसे एक ही copy हो। **Sequential**: सबको operations एक ही order में दिखते हैं, हर client के order का सम्मान करते हुए, लेकिन real time में नहीं। **Causal**: causally related writes order में दिखते हैं (reply कभी अपने review से पहले नहीं)। **Read-your-writes** और **monotonic reads**: एक user अपने writes देखता है और data को कभी पीछे जाते नहीं देखता। **Eventual**: writes रुकने पर replicas converge हो जाते हैं, order का कोई वादा नहीं।",
+    "explanation": "E-commerce mapping: आख़िरी item के stock को linearizable चाहिए; user के updated address को read-your-writes चाहिए; order status 'shipped' से वापस 'packed' नहीं होना चाहिए (monotonic reads); review counts eventual हो सकते हैं।",
+    "followUps": ["कौन सी guarantee 'मैंने save किया और वह गायब हो गया' ठीक करती है?", "Read replicas के साथ read-your-writes कैसे पाएँगे?"]
+  },
+  {
+    "slug": "cap-and-pacelc-mongodb-cp-or-ap",
+    "topic": "MongoDB",
+    "question": "MongoDB CP है या AP?",
+    "answer": "यह tunable है, इसलिए एक शब्द का label ज़रूरत से ज़्यादा simple है। Replica set में majority से elect हुआ **single primary** होता है; जो primary majority खो देता है वह step down कर देता है, इसलिए minority तरफ़ **writes reject करती है**, जो CP behaviour है। लेकिन `secondary` या `nearest` read preference वाले reads वहाँ भी serve हो सकते हैं, शायद stale, और `w: 1` वाले writes failover के बाद **rolled back** हो सकते हैं। `w: 'majority'`, `majority` या `linearizable` read concern, और primary reads के साथ यह strongly consistent behave करता है; secondary reads और `w: 1` के साथ यह latency और availability के लिए consistency का trade-off करता है।",
+    "explanation": "तीन knobs: **write concern** (कितने nodes acknowledge करें), **read concern** (`local`, `majority`, `linearizable`, `snapshot`) और **read preference** (कौन सा node reads serve करे)। Causally consistent sessions, `majority` read और write concerns के साथ मिलकर read-your-writes और monotonic reads देते हैं।",
+    "followUps": ["MongoDB में rollback क्या होता है?", "आप secondaries से कब read करेंगे?"]
+  },
+  {
+    "slug": "cap-and-pacelc-postgres-replication",
+    "topic": "PostgreSQL",
+    "question": "PostgreSQL replication consistency और availability पर कैसे असर डालता है?",
+    "answer": "एक **single PostgreSQL node** के पास असहमत होने के लिए कोई replicas नहीं, इसलिए वह down होने तक बस consistent है। **Asynchronous streaming replication** (default) में commits standbys तक पहुँचने से पहले लौट आते हैं, इसलिए standby reads **stale** हो सकते हैं और failover में आख़िरी commits **खो** सकते हैं: low latency, कमज़ोर consistency। **Synchronous replication** (`synchronous_standby_names`) में commits एक standby का इंतज़ार करते हैं, इसलिए कोई acknowledged commit नहीं खोता, लेकिन अगर कोई synchronous standby जवाब न दे, तो **commits block हो जाते हैं**: availability से ऊपर consistency। `synchronous_commit = remote_apply` इसके अलावा लौटने से पहले commit को standby पर visible भी बना देता है।",
+    "followUps": ["PostgreSQL में failover कौन संभालता है?", "User के profile update करने के बाद replica से stale reads से आप कैसे बचेंगे?"]
+  },
+  {
+    "slug": "cap-and-pacelc-stale-read-scenario",
+    "topic": "Consistency models",
+    "question": "Users शिकायत करते हैं कि order place करने के तुरंत बाद 'My orders' page पर वह कभी-कभी नहीं दिखता। Primary का load कम करने के लिए आप replicas से read करते हैं। आप इसे कैसे ठीक करेंगे?",
+    "answer": "यह **replication lag** की वजह से **read-your-writes** का violation है: order primary पर लिखा गया, लेकिन अगला read ऐसे replica पर गया जिसे वह अभी मिला नहीं था। विकल्प: **user के अपने हाल के data** के reads primary पर भेजें (जैसे write के बाद कुछ seconds के लिए, या 'My orders' के लिए हमेशा); MongoDB में `majority` read और write concerns के साथ **causally consistent session** इस्तेमाल करें ताकि secondary read तब तक रुके जब तक वह catch up न कर ले; PostgreSQL में WAL positions compare करें या जिन replicas से आप read करते हैं उनके लिए `remote_apply` इस्तेमाल करें। Replica reads उस data के लिए रखें जहाँ staleness से कोई नुकसान नहीं, जैसे product catalogue।",
+    "explanation": "Interviewers के लिए मुख्य बात: आपको हर जगह linearizability नहीं चाहिए। User को सिर्फ़ **अपने** writes देखने हैं, जो एक सस्ती session guarantee है। Replication lag को monitor करने और उसके बढ़ने पर alert करने का भी ज़िक्र करें।",
+    "followUps": ["Replication lag क्या है और यह क्यों होता है?", "क्या database के आगे एक cache इसे और बिगाड़ देगा?"]
+  },
+  {
+    "slug": "cap-and-pacelc-checkout-vs-likes",
+    "topic": "Trade-offs",
+    "question": "एक e-commerce system में किन features को strong consistency चाहिए और कौन से eventually consistent हो सकते हैं?",
+    "answer": "**Strong consistency**: payments, stock decrements, coupon redemptions और unique usernames, क्योंकि stale read से double-charging, overselling या duplicates होते हैं। **Eventually consistent**: review counts, view counts, 'recently viewed', recommendations और catalogue browsing, जहाँ कुछ seconds पीछे रहने से नुकसान नहीं और speed व availability ज़्यादा मायने रखते हैं। असली बात यह है कि **हर feature के हिसाब से** चुनें, हर database के हिसाब से नहीं।",
+    "followUps": ["आप high-volume view counter कैसे implement करेंगे?", "Shopping cart कहाँ फिट होता है?"]
+  }
+]

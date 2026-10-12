@@ -5,14 +5,17 @@ import { NotFound } from '@/components/common/NotFound';
 import { EmptyState } from '@/components/common/states';
 import { TRACK_ICONS } from '@/components/layout/AppSidebar';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { getTrackLessons } from '@/content';
+import { getTrackLessons, lessonText } from '@/content';
 import { statusOf, useProgress } from '@/features/progress/store';
+import { useLocale, useT } from '@/i18n/locale';
 import { TRACKS, type Lesson } from '@/types/content';
 
 export function TrackPage() {
   const { trackId } = useParams();
   const progress = useProgress();
-  const track = TRACKS.find((t) => t.id === trackId);
+  const locale = useLocale();
+  const t = useT();
+  const track = TRACKS.find((tr) => tr.id === trackId);
   if (!track) return <NotFound />;
   const Icon = TRACK_ICONS[track.id];
 
@@ -29,36 +32,39 @@ export function TrackPage() {
           <span className="rounded-lg bg-primary/10 p-2">
             <Icon className="size-6" />
           </span>
-          <h1 className="text-3xl font-bold tracking-tight">{track.title}</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t.tracks[track.id].title}</h1>
         </div>
-        <p className="text-muted-foreground">{track.description}</p>
+        <p className="text-muted-foreground">{t.tracks[track.id].description}</p>
       </header>
 
-      {modules.size === 0 && <EmptyState title="Lessons coming soon" description="This track is being written." />}
+      {modules.size === 0 && <EmptyState title={t.track.comingSoon} description={t.track.beingWritten} />}
 
       {[...modules].map(([module, moduleLessons]) => (
         <section key={module} className="space-y-3">
           <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">{module}</h2>
           <div className="grid gap-3">
-            {moduleLessons.map((lesson) => (
-              <Link key={lesson.slug} to={`/lessons/${lesson.slug}`} className="group">
-                <Card className="transition-colors group-hover:border-primary/50">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3">
-                      <CardTitle className="text-base group-hover:underline">{lesson.title}</CardTitle>
-                      <StatusBadge status={statusOf(progress, 'lesson', lesson.slug)} />
-                    </div>
-                    <CardDescription>{lesson.summary}</CardDescription>
-                    <div className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
-                      <LevelBadge level={lesson.level} />
-                      <span className="inline-flex items-center gap-1">
-                        <Clock className="size-3" /> {lesson.readingMinutes} min
-                      </span>
-                    </div>
-                  </CardHeader>
-                </Card>
-              </Link>
-            ))}
+            {moduleLessons.map((lesson) => {
+              const { title, summary } = lessonText(lesson, locale);
+              return (
+                <Link key={lesson.slug} to={`/lessons/${lesson.slug}`} className="group">
+                  <Card className="transition-colors group-hover:border-primary/50">
+                    <CardHeader>
+                      <div className="flex items-start justify-between gap-3">
+                        <CardTitle className="text-base group-hover:underline">{title}</CardTitle>
+                        <StatusBadge status={statusOf(progress, 'lesson', lesson.slug)} />
+                      </div>
+                      <CardDescription>{summary}</CardDescription>
+                      <div className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
+                        <LevelBadge level={lesson.level} />
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="size-3" /> {t.track.minutes(lesson.readingMinutes)}
+                        </span>
+                      </div>
+                    </CardHeader>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         </section>
       ))}

@@ -16,8 +16,9 @@ import {
   SidebarMenuSubItem,
   SidebarRail,
 } from '@/components/ui/sidebar';
-import { allLessons, getLesson } from '@/content';
+import { allLessons, getLesson, lessonText } from '@/content';
 import { statusOf, useProgress } from '@/features/progress/store';
+import { useLocale, useT } from '@/i18n/locale';
 import { TRACKS, type TrackId } from '@/types/content';
 
 export const TRACK_ICONS: Record<TrackId, LucideIcon> = {
@@ -34,6 +35,8 @@ export function AppSidebar() {
   const lessonMatch = useMatch('/lessons/:slug');
   const currentSlug = lessonMatch?.params.slug;
   const progress = useProgress();
+  const locale = useLocale();
+  const t = useT();
 
   // The open track: the one in the URL, or the track of the lesson being read.
   const activeTrack =
@@ -46,7 +49,7 @@ export function AppSidebar() {
           <img src="/favicon.svg" alt="" className="size-7" />
           <div className="leading-tight">
             <p className="font-semibold">DB Lab</p>
-            <p className="text-xs text-muted-foreground">MongoDB · PostgreSQL</p>
+            <p className="text-xs text-muted-foreground">{t.app.subtitle}</p>
           </div>
         </Link>
       </SidebarHeader>
@@ -58,14 +61,14 @@ export function AppSidebar() {
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/'}>
                   <Link to="/">
-                    <LayoutDashboard /> Dashboard
+                    <LayoutDashboard /> {t.nav.dashboard}
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/questions'}>
                   <Link to="/questions">
-                    <Brain /> Interview questions
+                    <Brain /> {t.nav.questions}
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -74,7 +77,7 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel>Tracks</SidebarGroupLabel>
+          <SidebarGroupLabel>{t.nav.tracks}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {TRACKS.map((track) => {
@@ -85,7 +88,7 @@ export function AppSidebar() {
                   <SidebarMenuItem key={track.id}>
                     <SidebarMenuButton asChild isActive={pathname === `/tracks/${track.id}`}>
                       <Link to={`/tracks/${track.id}`}>
-                        <Icon /> {track.title}
+                        <Icon /> {t.tracks[track.id].title}
                       </Link>
                     </SidebarMenuButton>
                     <SidebarMenuBadge>{trackLessons.length}</SidebarMenuBadge>
@@ -95,7 +98,8 @@ export function AppSidebar() {
                           <SidebarMenuSubItem key={lesson.slug}>
                             <SidebarMenuSubButton asChild isActive={currentSlug === lesson.slug}>
                               <Link to={`/lessons/${lesson.slug}`}>
-                                <span className="truncate">{lesson.title.split(':')[0]}</span>
+                                {/* Short name: the part of the title before the colon. */}
+                                <span className="truncate">{lessonText(lesson, locale).title.split(':')[0]}</span>
                                 <StatusDot status={statusOf(progress, 'lesson', lesson.slug)} />
                               </Link>
                             </SidebarMenuSubButton>

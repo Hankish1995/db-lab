@@ -1,0 +1,69 @@
+[
+  {
+    "slug": "postgres-joins-inner-vs-left",
+    "topic": "Joins",
+    "question": "INNER JOIN और LEFT JOIN में क्या अंतर है?",
+    "answer": "**INNER JOIN** सिर्फ़ वे rows लौटाता है जिनका दोनों sides पर match हो। **LEFT JOIN** left table की हर row लौटाता है, और जहाँ match नहीं होता वहाँ right table के columns को **NULL** से भर देता है। उदाहरण: `users LEFT JOIN orders` हर customer की list देता है, उन्हें भी जिन्होंने कभी order नहीं किया; inner join उन्हें हटा देता है।",
+    "followUps": ["FULL OUTER JOIN क्या लौटाता है?", "Teams RIGHT JOIN से क्यों बचती हैं?"]
+  },
+  {
+    "slug": "postgres-joins-self-and-cross",
+    "topic": "Joins",
+    "question": "Self join और cross join क्या हैं? हर एक का एक use case बताइए।",
+    "answer": "**Self join** दो aliases की मदद से एक table को ख़ुद से join करता है, hierarchical या peer relationships के लिए: `users u LEFT JOIN users r ON r.id = u.referred_by` दिखाता है कि किसने किसे refer किया। **Cross join** बिना किसी condition के rows का हर combination (Cartesian product) लौटाता है: report के लिए हर product × हर दिन जैसा grid बनाने में काम का, लेकिन ग़लती से हो जाए तो ख़तरनाक क्योंकि row count कई गुना हो जाता है।",
+    "followUps": ["आप सिर्फ़ एक level नहीं, बल्कि पूरा category tree कैसे list करेंगे?"]
+  },
+  {
+    "slug": "postgres-joins-where-vs-on",
+    "topic": "Joins",
+    "question": "users से orders तक के आपके LEFT JOIN में WHERE o.status = 'delivered' है, और बिना orders वाले customers गायब हो जाते हैं। क्यों?",
+    "answer": "`WHERE` join के **बाद** चलता है। Unmatched users का `o.status = NULL` होता है, और `NULL = 'delivered'` true नहीं है, इसलिए वे filter हो जाते हैं: LEFT JOIN असल में INNER JOIN बन जाता है। Right table वाली condition को `ON` clause में ले जाइए (`ON o.user_id = u.id AND o.status = 'delivered'`), ताकि वह यह तय करे कि क्या match होगा, यह नहीं कि कौन-सी rows बचेंगी।",
+    "explanation": "नियम: left table की conditions `WHERE` में जाती हैं; LEFT JOIN की right table की conditions `ON` में। अपवाद है जान-बूझकर लिखा गया anti-join `WHERE o.user_id IS NULL`।",
+    "followUps": ["LEFT JOIN में बिना orders वाले user के लिए count(*) 1 क्यों लौटाता है?"]
+  },
+  {
+    "slug": "postgres-joins-not-in-null",
+    "topic": "Anti-joins",
+    "question": "`WHERE id NOT IN (SELECT user_id FROM orders)` zero rows क्यों लौटा सकता है?",
+    "answer": "अगर subquery एक भी **NULL** लौटाए, तो `x NOT IN (…, NULL)` का मतलब बनता है `x <> … AND x <> NULL`, और `x <> NULL` unknown है, इसलिए पूरी condition कभी true नहीं होती और **कोई row** वापस नहीं आती। इसकी जगह `NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)` इस्तेमाल कीजिए: यह NULL-safe है और PostgreSQL इसे एक efficient **anti-join** की तरह plan करता है।",
+    "explanation": "एक आम shop में guest-checkout orders का `user_id = NULL` होता है, और ठीक तभी यह काटता है। `NOT IN` को anti-join में भी नहीं बदला जा सकता, इसलिए इसका plan अक्सर बुरा बनता है।",
+    "followUps": ["क्या NOT IN (1, 2, 3) जैसी literal list के साथ NOT IN safe है?", "क्या LEFT JOIN ... IS NULL, NOT EXISTS के बराबर है?"]
+  },
+  {
+    "slug": "postgres-joins-exists-vs-join",
+    "topic": "Semi-joins",
+    "question": "आप JOIN की जगह EXISTS कब इस्तेमाल करेंगे?",
+    "answer": "**EXISTS** तब इस्तेमाल कीजिए जब आपको सिर्फ़ यह जानना हो कि match है या नहीं, उसके columns नहीं चाहिए: 'वे users जिन्होंने order किया है'। JOIN **हर match के लिए** एक row लौटाता है, इसलिए तीन orders वाला user तीन बार दिखता है और आपको `DISTINCT` लगाना पड़ेगा। EXISTS एक **semi-join** है: यह पहले match पर रुक जाता है और हर left row को ज़्यादा से ज़्यादा एक बार लौटाता है।",
+    "followUps": ["क्या PostgreSQL में IN (subquery), EXISTS से अलग है?"]
+  },
+  {
+    "slug": "postgres-joins-fan-out",
+    "topic": "Joins",
+    "question": "orders को order_items से join करने वाली एक revenue report बहुत ज़्यादा totals दिखाती है। क्या ग़लत है और आप इसे कैसे ठीक करेंगे?",
+    "answer": "**Join fan-out**: हर order, अपने हर order item के लिए एक बार दोहराया जाता है, इसलिए `SUM(o.total)` हर order का total कई बार गिनता है। इसे ठीक करने के लिए subquery या CTE में **पहले child table को aggregate कीजिए** (हर `order_id` की एक row) और फिर join कीजिए, या सिर्फ़ item level वाले columns को sum कीजिए। `SUM(DISTINCT total)` fix नहीं है, क्योंकि दो अलग orders का total एक जैसा हो सकता है।",
+    "explanation": "```sql\nSELECT u.id, sum(o.total) AS revenue, sum(i.units) AS units\nFROM users u\nJOIN orders o ON o.user_id = u.id\nLEFT JOIN (\n  SELECT order_id, sum(quantity) AS units\n  FROM order_items GROUP BY order_id\n) i ON i.order_id = o.id\nGROUP BY u.id;\n```",
+    "followUps": ["अगर आप order_items और payments दोनों को orders से join करें तो क्या होगा?"]
+  },
+  {
+    "slug": "postgres-joins-lateral",
+    "topic": "LATERAL",
+    "question": "LATERAL join क्या है और यह कब काम आता है?",
+    "answer": "`FROM` में एक **LATERAL** subquery अपने से पहले listed tables के columns को reference कर सकती है, इसलिए यह **हर outer row के लिए एक बार** चलती है, एक for-each loop की तरह। **हर group के top-N** निकालने का यह सबसे साफ़ तरीक़ा है: हर user के लिए `SELECT ... FROM orders WHERE user_id = u.id ORDER BY created_at DESC LIMIT 3`। `(user_id, created_at DESC)` पर index हो, तो हर iteration एक छोटा index scan है। बिना orders वाले users को रखने के लिए `LEFT JOIN LATERAL ... ON true` इस्तेमाल कीजिए।",
+    "followUps": ["आप यही काम ROW_NUMBER() से कैसे करेंगे?", "Window-function वाला version कब तेज़ होता है?"]
+  },
+  {
+    "slug": "postgres-joins-algorithms",
+    "topic": "Join algorithms",
+    "question": "PostgreSQL कौन-से join algorithms इस्तेमाल करता है, और planner हर एक को कब चुनता है?",
+    "answer": "**Nested Loop**: हर outer row के लिए matching inner rows ढूँढता है; बढ़िया जब outer side छोटी हो और inner side पर index हो। **Hash Join**: छोटे input पर hash table बनाता है और बड़े input से उसे probe करता है; बड़े equality joins का मुख्य घोड़ा। **Merge Join**: join key पर sorted दो inputs पर साथ-साथ चलता है; अच्छा जब दोनों पहले से sorted हों, जैसे indexes के ज़रिए। Planner statistics से मिले row estimates के आधार पर चुनता है, इसलिए पुराने stats या missing foreign-key indexes ग़लत फ़ैसलों की वजह बनते हैं।",
+    "followUps": ["EXPLAIN ANALYZE में बहुत बड़े 'loops' count वाला Nested Loop किस ओर इशारा करता है?", "Foreign key columns को index क्यों करना चाहिए?"]
+  },
+  {
+    "slug": "postgres-joins-scenario-customers-without-orders",
+    "topic": "Joins",
+    "question": "Product टीम माँगती है 'हर active customer, पिछले 30 दिनों में उसके delivered orders की संख्या (न हों तो 0), और उसके latest order की date'। आप इसे कैसे लिखेंगे, और किन जालों से बचेंगे?",
+    "answer": "`users` से शुरू कीजिए, orders से **LEFT JOIN** कीजिए और status व date filters को **ON** clause में रखिए, ताकि जिन buyers ने हाल में order नहीं किया उनकी row बनी रहे; `u.is_active` को `WHERE` में रखिए। `*` नहीं, `o.id` गिनिए, ताकि बिना match वाले customers को 0 मिले। Latest order date एक अलग correlated subquery या LATERAL से लाइए, क्योंकि 30-day filter पुराने orders को छिपा देगा। `orders (user_id, created_at)` को index कीजिए ताकि दोनों हिस्से index lookups बनें।",
+    "explanation": "```sql\nSELECT u.id, u.email,\n       count(o.id) AS delivered_30d,\n       (SELECT max(created_at) FROM orders x WHERE x.user_id = u.id) AS last_order_at\nFROM users u\nLEFT JOIN orders o\n  ON o.user_id = u.id\n AND o.status = 'delivered'\n AND o.created_at >= now() - interval '30 days'\nWHERE u.is_active\nGROUP BY u.id, u.email;\n```",
+    "followUps": ["आप कैसे verify करेंगे कि result सही है?", "आप कौन-सा index जोड़ेंगे?"]
+  }
+]

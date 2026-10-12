@@ -1,0 +1,61 @@
+[
+  {
+    "slug": "caching-why-cache",
+    "topic": "Caching",
+    "question": "Caching performance क्यों सुधारता है, और इसके बदले आप क्या छोड़ते हैं?",
+    "answer": "असली traffic **read-heavy** और **skewed** होता है: hot items का एक छोटा set ज़्यादातर reads लेता है, इसलिए उन्हें तेज़ memory (Redis, CDN) में रखने से ज़्यादातर requests database छुए बिना serve हो जाती हैं। आप **freshness** छोड़ते हैं: cache एक copy है, इसलिए TTL expire होने या key invalidate होने तक readers को stale data दिख सकता है। साथ ही आप operate करने के लिए एक और system और failure के नए तरीके जोड़ते हैं।",
+    "followUps": ["Web app में caches कहाँ-कहाँ रह सकते हैं?", "आप क्या कभी cache नहीं करेंगे?"]
+  },
+  {
+    "slug": "caching-cache-aside",
+    "topic": "Caching",
+    "question": "Cache-aside pattern समझाइए।",
+    "answer": "Cache को **application** manage करती है। Read पर: cache check करो; hit हो तो वही लौटा दो; miss हो तो database पढ़ो, नतीजे को TTL के साथ cache में store करो, और लौटा दो। Write पर: database update करो, फिर cache key **delete** करो ताकि अगला read fresh data दोबारा load करे। यह सिर्फ़ वही cache करता है जो असल में माँगा जाता है, और cache down होने पर भी app चलती रहती है।",
+    "explanation": "```ts\nconst cached = await redis.get(key);\nif (cached !== null) return JSON.parse(cached);\nconst product = await products.findOne({ _id });\nawait redis.set(key, JSON.stringify(product), 'EX', 300);\nreturn product;\n```",
+    "followUps": ["Write पर key को update करने की जगह delete क्यों करें?", "Read-through इससे कैसे अलग है?"]
+  },
+  {
+    "slug": "caching-write-through-vs-write-behind",
+    "topic": "Caching",
+    "question": "Write-through और write-behind caching में क्या फ़र्क है?",
+    "answer": "**Write-through** cache और database दोनों में synchronously लिखता है, इसलिए हर write के बाद cache fresh रहता है, लेकिन writes धीमे होते हैं। **Write-behind (write-back)** cache में लिखता है, तुरंत acknowledge करता है, और database में बाद में flush करता है, अक्सर batches में: बहुत तेज़ writes, लेकिन अगर flush से पहले cache node fail हो जाए, तो **acknowledged writes खो जाते हैं**। Write-behind सिर्फ़ ऐसे data के लिए use करें जिसे आप खो सकते हैं या दोबारा बना सकते हैं, जैसे view counters।",
+    "followUps": ["Refresh-ahead क्या है?", "Product prices के लिए आप कौन सा pattern use करेंगे?"]
+  },
+  {
+    "slug": "caching-eviction-policies",
+    "topic": "Caching",
+    "question": "Redis कैसे तय करता है कि क्या evict करना है, और cache के लिए आप कौन सी policy चुनेंगे?",
+    "answer": "जब `maxmemory` पहुँच जाता है, Redis `maxmemory-policy` लागू करता है। Default `noeviction` writes reject करता है। Pure cache के लिए आम तौर पर `allkeys-lru` (least recently used) या `allkeys-lfu` (least frequently used, जो तब बेहतर है जब कुछ keys लगातार hot रहती हैं) चुने जाते हैं। `volatile-*` policies सिर्फ़ TTL वाली keys evict करती हैं, जो तब काम की हैं जब उसी instance में ऐसा data हो जिसे आप खो नहीं सकते, हालाँकि अलग instances ज़्यादा साफ़ तरीका है। Redis keys को sample करके LRU/LFU का अंदाज़ा (approximation) लगाता है।",
+    "followUps": ["जब eviction पहले से है, तो TTL की क्या भूमिका है?", "LRU बनाम LFU: LRU कब बुरा बर्ताव करता है?"]
+  },
+  {
+    "slug": "caching-stampede",
+    "topic": "Caching",
+    "question": "Cache stampede (thundering herd) क्या है, और इसे कैसे रोकते हैं?",
+    "answer": "जब एक **hot key expire** होती है, तो हज़ारों concurrent requests एक साथ miss करती हैं और सब वही महँगी query चलाती हैं, जो database को overload कर सकता है। इसे रोकें: **request coalescing** (हर key के लिए एक समय पर एक ही load), **distributed lock** (`SET lock NX EX`) ताकि सिर्फ़ एक request rebuild करे, **early probabilistic expiration** या refresh-ahead ताकि expiry से पहले एक अकेली request refresh कर दे, और **serve-stale-while-revalidate**। **Jittered TTLs** जोड़ें ताकि कई keys एक साथ expire न हों (जो इससे जुड़ी avalanche समस्या है)।",
+    "followUps": ["Stampede, penetration और avalanche में क्या फ़र्क है?", "अगर lock रखने वाला crash हो जाए तो क्या होगा?"]
+  },
+  {
+    "slug": "caching-penetration-bloom-filter",
+    "topic": "Caching",
+    "question": "Attackers ऐसे random product IDs माँग रहे हैं जो मौजूद नहीं हैं, और हर request database तक पहुँचती है। यह क्या है और इसे कैसे रोकेंगे?",
+    "answer": "यह **cache penetration** है: जो keys मौजूद नहीं हैं उनके lookups कभी cache नहीं होते, इसलिए हर एक database तक पहुँचता है। Fixes: **negative results cache करें** (\"not found\" को छोटे TTL के साथ store करें), **input validate करें** (malformed IDs को जल्दी reject करें), rate-limit करें, और आगे मौजूदा IDs का एक **Bloom filter** लगाएँ: यह बिना false negatives के \"पक्का मौजूद नहीं\" का जवाब देता है, इसलिए ज़्यादातर नकली IDs database query के बिना reject हो जाते हैं; false positives बस normal lookup तक चले जाते हैं।",
+    "followUps": ["Bloom filter में false negatives क्यों नहीं हो सकते?", "Products जुड़ने पर Bloom filter को update कैसे रखेंगे?"]
+  },
+  {
+    "slug": "caching-invalidation-race",
+    "topic": "Caching",
+    "question": "\"पहले database update करो, फिर key delete करो\" के बावजूद cache-aside stale data serve कर सकता है। कैसे, और इसका बचाव कैसे करेंगे?",
+    "answer": "एक reader cache miss करता है और database से **पुरानी** value पढ़ता है; फिर एक writer database update करता है और key delete करता है; आख़िर में धीमा reader **पुरानी value को cache में set** कर देता है। TTL expire होने तक यह stale रहती है। बचाव: नुकसान सीमित रखने के लिए हमेशा **TTL** use करें, **delayed double delete**, value के साथ एक **version** store करें और नई value को overwrite करने से मना करें, **leases** जो invalidation के बाद set को reject करती हैं, या invalidation को **CDC** से चलाएँ ताकि कोई path इसे भूल न सके।",
+    "explanation": "Timeline:\n\n```text\nReader: GET → miss; read DB → 100\nWriter:                 UPDATE → 80; DEL key\nReader: SET key = 100   ← stale\n```",
+    "followUps": ["Write पर नई value set करने से delete करना ज़्यादा safe क्यों है?", "क्या write-through इससे बचा लेगा?"]
+  },
+  {
+    "slug": "caching-flash-sale-design",
+    "topic": "Caching",
+    "question": "Flash sale के लिए caching design करें: एक product page पर हर second 50,000 requests आती हैं और stock लगातार बदलता है। आप क्या cache करेंगे और क्या नहीं?",
+    "answer": "Page के **static हिस्से** (description, images, price) CDN पर और Redis में TTL के साथ cache करें, stampede से सुरक्षा के साथ (coalescing, lock, early refresh)। Stock को एक छोटे TTL वाले cache से **अंदाज़न (approximate)** value के रूप में दिखाएँ (\"in stock\" / \"few left\")। Cached stock से purchase का फ़ैसला **कभी** न करें: checkout database में एक atomic conditional decrement करता है, चाहें तो एक Redis `DECR` gate के पीछे जो ज़्यादातर हारने वालों को जल्दी लौटा देता है। Personalized हिस्से (cart, user info) अलग से fetch होते हैं और कभी public रूप में cache नहीं होते।",
+    "explanation": "Interviewer के लिए मुख्य line: users जो browse करते हैं वह cache करें, business जिस पर फ़ैसला करता है वह कभी नहीं। Sale शुरू होने से पहले cache को pre-warm करने का भी ज़िक्र करें।",
+    "followUps": ["अगर sale के बीच price बदल जाए तो उसे invalidate कैसे करेंगे?", "अगर sale के दौरान Redis down हो जाए तो क्या होगा?"]
+  }
+]

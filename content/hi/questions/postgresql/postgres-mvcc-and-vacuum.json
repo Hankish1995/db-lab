@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "postgres-mvcc-and-vacuum-what-is-mvcc",
+    "topic": "MVCC",
+    "question": "MVCC क्या है और PostgreSQL इसे कैसे implement करता है?",
+    "answer": "**Multi-version concurrency control** एक row के कई versions रखता है ताकि हर transaction एक consistent **snapshot** पढ़ सके। PostgreSQL में हर row version (tuple) `xmin` store करता है, यानी वो transaction जिसने उसे बनाया, और `xmax`, यानी वो जिसने उसे delete या replace किया; UPDATE एक **नया tuple** लिखता है और पुराने पर `xmax` set करता है। Snapshot तय करता है कि आपको कौन सा version दिखेगा, इसलिए **readers writers को block नहीं करते और writers readers को block नहीं करते**।",
+    "followUps": [
+      "पुराने version का क्या होता है?",
+      "क्या एक ही row पर दो writers अब भी एक-दूसरे को block करते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-update-internals",
+    "topic": "MVCC",
+    "question": "जब आप किसी row का एक column UPDATE करते हैं, तो PostgreSQL में physically क्या होता है?",
+    "answer": "PostgreSQL row का एक **पूरा नया version** लिखता है (नया `ctid`, `xmin` = आपका transaction ID) और पुराने version के `xmax` पर आपका transaction ID mark करता है। जब किसी snapshot को उसकी ज़रूरत नहीं रहती, तो पुराना version **dead tuple** बनकर disk पर तब तक पड़ा रहता है जब तक VACUUM उसे साफ़ न करे। जब तक update **HOT** के लायक न हो, हर index में भी नए version की ओर point करने वाली एक नई entry जुड़ती है।",
+    "explanation": "असली output: update से पहले `xmin 1877, ctid (0,1), stock 10`; `UPDATE inv SET stock = stock - 1` के बाद दिखने वाली row `xmin 1879, ctid (0,4), stock 9` है, और `pg_stat_user_tables` एक dead tuple गिनता है।",
+    "followUps": [
+      "HOT update क्या है?",
+      "भारी updates से table क्यों बढ़ सकती है?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-vacuum-vs-full",
+    "topic": "VACUUM",
+    "question": "VACUUM, VACUUM FULL और autovacuum में क्या फ़र्क है?",
+    "answer": "**VACUUM** dead tuples हटाता है और उनकी जगह को reusable mark करता है, free space और visibility maps update करता है और पुरानी rows freeze करता है; ये reads और writes के साथ-साथ चलता है और आमतौर पर file को **छोटा नहीं करता**। **VACUUM FULL** table और उसके indexes को नई compact files में दोबारा लिखता है और space OS को लौटा देता है, पर **ACCESS EXCLUSIVE** lock रखता है (SELECTs भी wait करते हैं) और extra disk माँगता है। **Autovacuum** background daemon है जो dead/changed rows के thresholds पार होने पर हर table पर VACUUM और ANALYZE चलाता है।",
+    "explanation": "Lesson demo: दो full updates के बाद 13 MB की table 40 MB हो गई; VACUUM के बाद वो 40 MB ही रही (space reusable, 0 dead tuples), VACUUM FULL ने उसे वापस 13 MB कर दिया।",
+    "followUps": [
+      "Downtime के बिना bloated table को छोटा कैसे करेंगे?",
+      "Autovacuum thresholds क्या हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-autovacuum-tuning",
+    "topic": "VACUUM",
+    "question": "Autovacuum किसी table पर कब चलता है, और बहुत बड़ी table के लिए ये काफ़ी क्यों नहीं हो सकता?",
+    "answer": "Default रूप से ये तब vacuum करता है जब dead tuples `autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × rows` से ज़्यादा हो जाएँ, यानी table का **50 + 20%**, और **50 + 10%** rows बदलने के बाद analyze करता है। 100-million-row table पर इसका मतलब है 20 million dead tuples का इंतज़ार, इसलिए हर run बहुत बड़ा होता है और bloat जमा होता जाता है। इसे disable करने की जगह, हर table के लिए `ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.01)` से ठीक करें और autovacuum को ज़्यादा I/O budget दें।",
+    "followUps": [
+      "Autovacuum disable करना ख़तरनाक क्यों है?",
+      "autovacuum_vacuum_cost_limit क्या control करता है?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-hot-updates",
+    "topic": "MVCC",
+    "question": "HOT update क्या है और fillfactor इसमें कैसे मदद करता है?",
+    "answer": "**Heap-only tuple** update नया version **उसी page पर** लिखता है और **किसी index को नहीं छूता**, क्योंकि index entry अब भी पुराने tuple तक ले जाती है, जो chain होकर नए tuple से जुड़ा होता है। इसके लिए ज़रूरी है कि **कोई indexed column न बदले** और page पर **खाली जगह** हो। `fillfactor` (जैसे 80) insert के समय हर page पर जगह छोड़ता है, ताकि ज़्यादा updates इसके लायक बनें; बार-बार बदलने वाले columns पर indexes से बचना भी मदद करता है। `pg_stat_user_tables` में `n_tup_hot_upd / n_tup_upd` ratio check करें।",
+    "followUps": [
+      "बहुत सारे indexes के साथ non-HOT updates महँगे क्यों होते हैं?",
+      "Page pruning क्या है?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-long-transactions",
+    "topic": "VACUUM",
+    "question": "VACUUM चलता है पर 'dead but not yet removable' tuples report करता है। क्या चल रहा है?",
+    "answer": "कोई snapshot जो **अब भी खुला है** उसे उन पुराने versions की ज़रूरत हो सकती है, इसलिए VACUUM को उन्हें रखना पड़ता है। आम वजहें हैं: लंबी चलने वाली query या transaction, कोई session जो **idle in transaction** है, एक छोड़ा हुआ **replication slot**, लंबी queries वाले replica से `hot_standby_feedback`, या एक भूला हुआ prepared transaction। एक पुराना snapshot database की **हर table** का cleanup रोक देता है। इसे `pg_stat_activity` में `backend_xmin` और `xact_start` से ढूँढें, और `idle_in_transaction_session_timeout` से बचाव करें।",
+    "followUps": [
+      "सबसे पुराना open transaction कैसे ढूँढेंगे?",
+      "Replication slots vacuum पर कैसे असर डालते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-wraparound",
+    "topic": "VACUUM",
+    "question": "PostgreSQL में transaction ID wraparound क्या है और इसे कैसे रोका जाता है?",
+    "answer": "Transaction IDs **32-bit** होते हैं और उनकी तुलना गोलाई में होती है, इसलिए लगभग 2 billion IDs 'अतीत' में और 2 billion 'भविष्य' में होते हैं। कुछ न किया जाए, तो बहुत पुरानी rows आख़िरकार ऐसी दिखेंगी जैसे वो भविष्य में बनी हों, और invisible हो जाएँगी। VACUUM पुराने tuples को **freeze** करके इसे रोकता है (उन्हें xmin की परवाह किए बिना सबके लिए visible mark करता है)। जब किसी table का `age(relfrozenxid)` `autovacuum_freeze_max_age` (default 200 million) से आगे जाता है, तो एक **anti-wraparound autovacuum** चलता है, भले ही autovacuum disabled हो; अगर freezing फिर भी पीछे रह जाए, तो PostgreSQL warning देता है और आख़िर में vacuum पूरा होने तक **नए XIDs देना बंद कर देता है** (कोई writes नहीं)।",
+    "followUps": [
+      "इसे monitor कैसे करते हैं?",
+      "Freezing को क्या रोक सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-bloat-scenario",
+    "topic": "VACUUM",
+    "question": "Scenario: carts table 30 GB की है जबकि उसमें सिर्फ़ 200 MB की live rows हैं, और queries धीमी होती जा रही हैं। आप इसकी जाँच और fix कैसे करेंगे?",
+    "answer": "ये **bloat** है, जो बार-बार के updates और deletes के vacuum से आगे निकल जाने से हुआ है। `pg_stat_user_tables` (`n_dead_tup`, `last_autovacuum`) check करें, cleanup रोकने वाली **लंबी या idle-in-transaction sessions** और अटके replication slots ढूँढें, और देखें कि autovacuum thresholds बहुत ऊँचे तो नहीं। पहले वजह ठीक करें: blockers को kill करें या उन पर timeout लगाएँ, table का `autovacuum_vacuum_scale_factor` घटाएँ, HOT updates के लिए `fillfactor` और hot columns पर कम indexes पर विचार करें। फिर **`pg_repack`** (online) से या maintenance window में `VACUUM FULL` से space वापस लें, क्योंकि plain VACUUM file को छोटा नहीं करेगा।",
+    "explanation": "Design पर भी विचार करें: कम समय रहने वाली cart rows को mass DELETEs की जगह time-based partitions drop करके expire किया जा सकता है, जिससे कोई dead tuples नहीं बचते।",
+    "followUps": [
+      "VACUUM FULL को maintenance window क्यों चाहिए?",
+      "Bloat index scans को कैसे नुकसान पहुँचाता है?"
+    ]
+  },
+  {
+    "slug": "postgres-mvcc-and-vacuum-vs-undo-log",
+    "topic": "MVCC",
+    "question": "PostgreSQL का MVCC, MySQL InnoDB के undo-log वाले तरीके से कैसे अलग है?",
+    "answer": "PostgreSQL पुराने versions **table में ही** रखता है: update एक नया tuple जोड़ता है, rollback मुफ़्त है, पर dead tuples को **VACUUM** से हटाना पड़ता है और इनसे table और index bloat हो सकता है। InnoDB row को **उसी जगह** update करता है और पिछला version एक अलग **undo log** में रखता है; जिन readers को पुराने versions चाहिए वो उन्हें undo से दोबारा बनाते हैं, purge threads उसे साफ़ करते हैं, और rollback को undo apply करना पड़ता है। लंबे transactions PostgreSQL की tables को bloat करते हैं, जबकि InnoDB में वो undo history बढ़ाते हैं और reads धीमे करते हैं।",
+    "followUps": [
+      "MongoDB का WiredTiger क्या करता है?",
+      "Update-heavy workloads के लिए कौन सा तरीका बेहतर है?"
+    ]
+  }
+]

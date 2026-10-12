@@ -1,0 +1,62 @@
+[
+  {
+    "slug": "scaling-databases-vertical-vs-horizontal",
+    "topic": "Scaling",
+    "question": "Database के लिए vertical और horizontal scaling में क्या फ़र्क है?",
+    "answer": "**Vertical scaling** का मतलब है बड़ी machine (ज़्यादा CPU, RAM, तेज़ disks): code बदलने की ज़रूरत नहीं, लेकिन एक ceiling है, ऊपरी सिरे पर cost तेज़ी से बढ़ती है, और यह फिर भी single point of failure है। **Horizontal scaling** का मतलब है ज़्यादा machines: reads के लिए read replicas, writes और storage के लिए sharding। यह कहीं आगे तक scale होता है, लेकिन complexity जोड़ता है: replication lag, routing, cross-shard queries।",
+    "explanation": "Vertical scaling को कम आँका जाता है: query और index tuning के बाद, बढ़ती app के लिए बड़ा instance अक्सर सबसे सस्ता अगला step होता है।",
+    "followUps": ["App servers को databases से ज़्यादा आसानी से horizontally scale क्यों किया जा सकता है?", "आप vertical scaling कब बंद करेंगे?"]
+  },
+  {
+    "slug": "scaling-databases-stateless-app-servers",
+    "topic": "Scaling",
+    "question": "App servers के stateless होने का क्या मतलब है, और scaling के लिए यह क्यों ज़रूरी है?",
+    "answer": "**Stateless** server requests के बीच कोई user data अपनी memory या disk में नहीं रखता: sessions Redis या signed token में रहते हैं, files object storage में, data database में। तब कोई भी instance कोई भी request serve कर सकता है, इसलिए आप load balancer के पीछे instances जोड़कर scale करते हैं और उन्हें आराम से मार या बदल सकते हैं। अगर किसी instance को मारने से users log out हो जाते हैं या cart खो जाता है, तो वह stateless नहीं है।",
+    "followUps": ["आप sessions कहाँ store करेंगे?", "Sticky sessions क्या हैं और उनसे क्यों बचें?"]
+  },
+  {
+    "slug": "scaling-databases-why-p99",
+    "topic": "Scaling",
+    "question": "हम average latency की जगह p95/p99 latency क्यों देखते हैं?",
+    "answer": "Averages धीमी tail को छिपा लेते हैं: 20 ms पर 99 requests और 3 s पर एक request का average लगभग 50 ms आता है, जो healthy दिखता है जबकि 1% users 3 seconds इंतज़ार करते हैं। **p99** वह latency है जिससे 99% requests तेज़ होती हैं, इसलिए यह दिखाता है कि आपके सबसे बदकिस्मत users क्या महसूस करते हैं। यह तब और भी ज़्यादा मायने रखता है जब एक page कई backend calls में फैलता है, क्योंकि calls की गिनती के साथ कम से कम एक call के धीमे होने का chance बढ़ता है।",
+    "followUps": ["Latency के साथ आप कौन से database metrics देखेंगे?", "p99 spikes पैदा करने वाली queries कैसे ढूँढेंगे?"]
+  },
+  {
+    "slug": "scaling-databases-connection-pooling",
+    "topic": "Scaling",
+    "question": "आपकी app autoscale होकर 60 instances तक पहुँची और PostgreSQL \"too many connections\" के साथ fail होने लगा। क्या हुआ और इसे कैसे ठीक करेंगे?",
+    "answer": "हर instance अपना pool खोलता है, इसलिए कुल connections = instances × pool size, और autoscaling इसे गुणा कर देता है। PostgreSQL हर connection के लिए एक process use करता है, इसलिए सैकड़ों ज़्यादातर idle connections memory बर्बाद करते हैं और contention बढ़ाते हैं। इसे ठीक करें: **pools का size सोच-समझकर तय करें** (हर instance पर छोटा), PgBouncer जैसा **connection pooler** जोड़ें ताकि कई client connections कुछ server connections share करें, और हमेशा queue में रहने की जगह connection timeout के साथ जल्दी fail करें।",
+    "explanation": "Size तय करने में Little's law मदद करता है: concurrent queries ≈ QPS × average query time। 2,000 QPS × 5 ms ≈ 10 queries चल रही होती हैं, जो 60 × 20 = 1,200 connections से बहुत कम है।",
+    "followUps": ["PgBouncer में session और transaction pooling में क्या फ़र्क है?", "MongoDB का driver pool कैसे अलग है?"]
+  },
+  {
+    "slug": "scaling-databases-replicas-vs-sharding",
+    "topic": "Scaling",
+    "question": "आप read replicas कब जोड़ेंगे, और कब इसकी जगह shard करेंगे?",
+    "answer": "**Read replicas** तब मदद करती हैं जब load ज़्यादातर ऐसे **reads** का हो जो थोड़ी staleness झेल सकते हैं: हर replica में सारा data होता है, इसलिए वे writes या storage में मदद नहीं करतीं, क्योंकि हर replica को हर write apply करना पड़ता है। **Sharding** data को बाँटता है ताकि हर server **writes और storage** का एक हिस्सा संभाले। तो: read-heavy है और एक machine पर समा जाता है → cache और replicas; write throughput या data size एक primary से ज़्यादा → shard।",
+    "followUps": ["Replication lag कौन सी समस्याएँ पैदा करता है?", "Sharding से पहले आप क्या आज़माएँगे?"]
+  },
+  {
+    "slug": "scaling-databases-cqrs-polyglot",
+    "topic": "Scaling",
+    "question": "Polyglot persistence क्या है, और यह कब फ़ायदेमंद है?",
+    "answer": "**Polyglot persistence** का मतलब है अलग-अलग कामों के लिए अलग data stores use करना: orders और payments के लिए relational DB, caching और sessions के लिए Redis, product search के लिए search engine, analytics के लिए warehouse। Primary DB **source of truth** रहता है और बाकी stores events या CDC से भरे जाते हैं, इसलिए वे eventually consistent होते हैं। यह तब फ़ायदेमंद है जब workloads आपस में लड़ते हों या main DB ग़लत tool हो (जैसे fuzzy search), और तब जल्दबाज़ी है जब एक database हर query ठीक से serve करता हो।",
+    "followUps": ["Search index को database के साथ sync में कैसे रखेंगे?", "CQRS क्या है?"]
+  },
+  {
+    "slug": "scaling-databases-slow-store-scenario",
+    "topic": "Scaling",
+    "question": "Scenario: एक marketing campaign के बाद एक e-commerce site की p99 latency 200 ms से 2 s पर पहुँच गई। बताइए आप इसे कैसे diagnose और ठीक करेंगे।",
+    "answer": "पहले bottleneck ढूँढने के लिए **measure** करें: app बनाम DB time, DB CPU, IOPS और cache hit ratio, active connections, slow queries (`pg_stat_statements`), replication lag। फिर cost के क्रम में ठीक करें: `EXPLAIN ANALYZE` से मिले missing indexes या N+1 queries; connection exhaustion → pools का सही size / PgBouncer; बार-बार होने वाले hot reads (product pages) → Redis/CDN cache; बचा हुआ read load → lag झेल सकने वाले reads के लिए replicas; अब भी CPU-bound → बड़ा instance। Sharding आख़िरी उपाय है, और सिर्फ़ तब जब writes या data size सीमा हो।",
+    "explanation": "Interviewers सुनना चाहते हैं **पहले measure करो**, और fixes की एक सीढ़ी जिसमें सबसे सस्ते, सबसे आसानी से वापस लिए जा सकने वाले steps पहले हों। बताएँ कि campaigns skew पैदा करते हैं: कुछ hot products, इसलिए caching आम तौर पर सबसे बड़ी जीत देता है।",
+    "followUps": ["अगर समस्या इसकी जगह write-heavy हो तो?", "Checkout को browsing traffic से कैसे बचाएँगे?"]
+  },
+  {
+    "slug": "scaling-databases-10m-users-design",
+    "topic": "Scaling",
+    "question": "10k से 10 million users तक बढ़ते एक e-commerce store के लिए data tier design करें। आप क्या जोड़ेंगे, किस क्रम में, और क्यों?",
+    "answer": "एक अच्छी तरह indexed relational database और stateless app servers से शुरू करें। Load बढ़ने पर: queries और indexes tune करें, vertically scale करें, एक **connection pooler** जोड़ें, फिर hot reads को **cache** करें (Redis + CDN), lag झेल सकने वाले reads के लिए **read replicas** जोड़ें, orders जैसी बहुत बड़ी tables को **partition** और archive करें, और **shard** तभी करें जब एक primary writes या data नहीं संभाल पाता। सबसे ऊपर read models अलग करें (CQRS): products के लिए search engine, analytics के लिए warehouse, जिन्हें CDC से data मिलता है। हर step किसी measured bottleneck से शुरू होता है, users की गिनती से नहीं।",
+    "explanation": "एक मज़बूत जवाब numbers जोड़ता है: 1M daily users × 20 page views ≈ औसतन 230 views/s, peak पर शायद 2,000/s, ज़्यादातर reads; orders शायद 50k/day ≈ 1 write/s से कम। इससे पता चलता है कि write throughput के लिए orders table को shard करने की ज़रूरत शायद ही पड़े।",
+    "followUps": ["इनमें से कौन से steps eventual consistency जोड़ते हैं?", "कौन सा data हमेशा primary से ही आना चाहिए?"]
+  }
+]

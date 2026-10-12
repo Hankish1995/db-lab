@@ -1,0 +1,60 @@
+[
+  {
+    "slug": "sql-vs-nosql-main-difference",
+    "topic": "SQL vs NoSQL",
+    "question": "SQL और NoSQL databases में मुख्य अंतर क्या है?",
+    "answer": "**SQL** (relational) databases data को **normalised tables** में रखते हैं, जिन पर schema enforce होता है, और query के समय **joins** से उन्हें मिलाते हैं। **NoSQL** non-relational models की एक family है (document, key-value, wide-column, graph), जो आमतौर पर data को **उसी shape में रखती है जिसमें वह पढ़ा जाता है**, और schema flexible होता है। इतिहास में SQL एक server पर scale up करता था और NoSQL scale out करने के लिए बना था, लेकिन अब यह रेखा धुंधली हो गई है।",
+    "followUps": ["NoSQL की families के नाम बताइए, हर एक का एक उदाहरण देकर।", "E-commerce app के लिए आप कौन-सा चुनेंगे?"]
+  },
+  {
+    "slug": "sql-vs-nosql-schema-on-write-vs-read",
+    "topic": "Schema",
+    "question": "Schema-on-write और schema-on-read में क्या अंतर है?",
+    "answer": "**Schema-on-write** का मतलब है कि database हर write को एक तय schema से validate करता है और गलत data reject कर देता है, जैसे PostgreSQL column types और constraints के साथ करता है। **Schema-on-read** का मतलब है कि database कोई भी shape accept कर लेता है और पढ़ते समय application उसे interpret करती है; MongoDB का default यही है। Schema दोनों में मौजूद होता है; फ़र्क बस इतना है कि उसे database enforce करता है या आपका code। MongoDB `$jsonSchema` validation से इसे enforce कर सकता है।",
+    "followUps": ["MongoDB में schema कैसे enforce करते हैं?", "Schema-on-read के क्या risks हैं?"]
+  },
+  {
+    "slug": "sql-vs-nosql-embed-vs-reference",
+    "topic": "Data modeling",
+    "question": "MongoDB में कब embed करते हैं और कब reference?",
+    "answer": "वह data **embed** करें जो साथ में पढ़ा जाता है, parent का हिस्सा है और जिसका size सीमित है, जैसे order line items या shipping address। वह data **reference** करें जो कई documents में shared है, अलग से बदलता है, या बिना सीमा के बढ़ता है, जैसे users, products या reviews। Embedding से एक ही read में access और single-document atomicity मिलती है; referencing से duplication और **16 MB document limit** दोनों से बचते हैं।",
+    "explanation": "एक order `items` को `name` और `unitPrice` के snapshot के साथ embed करता है, क्योंकि product की कीमत बदलने पर invoice नहीं बदलना चाहिए। Reviews `productId` के साथ अपने अलग collection में जाते हैं, क्योंकि किसी popular product के लाखों reviews हो सकते हैं।",
+    "followUps": ["अगर आप एक unbounded array embed कर दें तो क्या होता है?", "MongoDB में join कैसे करते हैं?"]
+  },
+  {
+    "slug": "sql-vs-nosql-mongodb-transactions-myth",
+    "topic": "Myths",
+    "question": "क्या यह सच है कि MongoDB में न transactions होते हैं और न schema?",
+    "answer": "नहीं। **Single-document writes हमेशा atomic होते हैं**, और MongoDB replica sets पर 4.0 से और sharded clusters पर 4.2 से **multi-document ACID transactions** support करता है। Schema के लिए, collections **`$jsonSchema` validators** से rules enforce कर सकते हैं, और ज़्यादातर Node apps ऊपर से Mongoose schemas भी जोड़ती हैं। सही बात यह है कि MongoDB का schema **default रूप से flexible** है, और अच्छा document design अक्सर multi-document transactions की ज़रूरत ही खत्म कर देता है।",
+    "followUps": ["MongoDB में multi-document transactions की क्या कीमत है?", "क्या 'NoSQL ज़्यादा तेज़ है' सच है?"]
+  },
+  {
+    "slug": "sql-vs-nosql-scaling-history",
+    "topic": "Scaling",
+    "question": "SQL को vertical scaling से और NoSQL को horizontal scaling से क्यों जोड़ा जाता है? क्या यह आज भी सच है?",
+    "answer": "Relational databases single servers के लिए design हुए थे, जहाँ joins और multi-row transactions आसान होते हैं, इसलिए स्वाभाविक रास्ता **scaling up** था। Dynamo, Bigtable, Cassandra और MongoDB जैसे NoSQL systems data को partition करके **scale out** करने के लिए बनाए गए, और अक्सर इसके लिए joins और cross-node transactions छोड़ दिए गए। आज यह धुंधला है: SQL read replicas, partitioning, **Citus** या **Vitess** sharding और distributed SQL (CockroachDB, Spanner) से scale करता है, और MongoDB shards के पार transactions support करता है।",
+    "followUps": ["Vertical और horizontal scaling में क्या अंतर है?", "PostgreSQL को shard करने से पहले आप क्या-क्या आज़माएँगे?"]
+  },
+  {
+    "slug": "sql-vs-nosql-model-orders",
+    "topic": "Data modeling",
+    "question": "PostgreSQL और MongoDB में आप orders और order items को कैसे model करेंगे?",
+    "answer": "**PostgreSQL** में: `users`, `products`, `orders` (`user_id` foreign key के साथ) और एक `order_items` join table, जिसमें `order_id`, `product_id`, `quantity` और `unit_price` होते हैं; order पढ़ने के लिए joins चाहिए। **MongoDB** में: एक `orders` collection, जिसके हर document में `userId` और product के नाम और कीमत के snapshot के साथ एक **embedded `items` array** होता है, ताकि एक `findOne` पूरा order लौटा दे। दोनों में खरीद के समय की कीमत store होती है, क्योंकि product की कीमतें बदलने पर order history नहीं बदलनी चाहिए।",
+    "followUps": ["Product reviews आप कहाँ store करेंगे?", "दोनों में 'product X वाले सारे orders' कैसे दिखाएँगे?"]
+  },
+  {
+    "slug": "sql-vs-nosql-polyglot-persistence",
+    "topic": "Architecture",
+    "question": "Polyglot persistence क्या है और इसकी क्या कीमत है?",
+    "answer": "**Polyglot persistence** का मतलब है एक system में कई अलग-अलग databases इस्तेमाल करना, हर एक उस access pattern के लिए जिसे वह सबसे अच्छे से संभालता है, जैसे orders के लिए PostgreSQL, sessions और caching के लिए Redis, और product search के लिए Elasticsearch। इसकी कीमतें हैं: **data को sync में रखना** (CDC, change streams, queues), stores के बीच **inconsistency windows** को संभालना, और extra operational काम: हर store के लिए monitoring, backups, upgrades और team की जानकारी।",
+    "followUps": ["आप Elasticsearch को अपने primary database के साथ sync में कैसे रखेंगे?"]
+  },
+  {
+    "slug": "sql-vs-nosql-choose-for-scenario",
+    "topic": "SQL vs NoSQL",
+    "question": "आप एक marketplace शुरू कर रहे हैं, जिसमें products के attributes हर category में बहुत अलग हैं, साथ में orders, payments और seller payouts भी हैं। SQL या NoSQL? अपना जवाब justify कीजिए।",
+    "answer": "मैं label नहीं, access pattern देखकर फ़ैसला करूँगा। Payments, payouts, inventory और orders को **entities के बीच strong integrity** और काफ़ी reporting चाहिए, जो **PostgreSQL** के पक्ष में जाता है। बदलते product attributes GIN index वाले एक **`jsonb` column** में अच्छे से fit हो जाते हैं, इसलिए सिर्फ़ flexibility के लिए दूसरा database नहीं चाहिए। अगर team MongoDB में कहीं ज़्यादा मज़बूत हो तो मैं उसे चुनूँगा, और orders को embedded items वाले documents के रूप में model करके payment flows के लिए transactions इस्तेमाल करूँगा। दोनों ही हालात में, faceted product search के लिए बाद में एक search engine जोड़ूँगा।",
+    "explanation": "Interviewers क्या सुनना चाहते हैं: आप access patterns पहचानें, हर option का trade-off बताएँ, और absolute दावे न करें। `jsonb` का ज़िक्र दिखाता है कि आप जानते हैं PostgreSQL भी flexible हो सकता है; team skills का ज़िक्र असली दुनिया वाली समझ दिखाता है।",
+    "followUps": ["jsonb attributes को आप कैसे index करेंगे?", "किस वजह से आप MongoDB पर switch करेंगे?"]
+  }
+]

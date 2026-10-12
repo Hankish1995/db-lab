@@ -1,0 +1,104 @@
+[
+  {
+    "slug": "mongodb-performance-slow-query-workflow",
+    "topic": "MongoDB performance",
+    "question": "Scenario: \"My orders\" page के पीछे की एक MongoDB query धीमी हो गई है। बताइए आप इसकी जाँच कैसे करेंगे।",
+    "answer": "पहले ठीक उसी query को **reproduce** करूँगा (slow query log, profiler या Atlas Query Profiler से)। फिर `explain('executionStats')` चलाकर **winning plan** देखूँगा (`COLLSCAN` या in-memory `SORT` red flags हैं) और `totalKeysExamined` / `totalDocsExamined` की तुलना `nReturned` से करूँगा। ऊँचे ratio का मतलब है index missing है या गलत है, इसलिए मैं **Equality, Sort, Range** को follow करते हुए एक compound index बनाऊँगा, जैसे `{ customerId: 1, status: 1, createdAt: -1 }`, फिर `explain` दोबारा चलाकर पक्का करूँगा कि `IXSCAN` है और ratio 1 के करीब है। मैं यह भी check करूँगा कि endpoint **projection** इस्तेमाल करता है, pagination समझदारी वाला है, और working set RAM में fit होता है।",
+    "explanation": "पहले: `COLLSCAN` के ऊपर `SORT`, 27 लौटाने के लिए 2000 docs examine हुए। Index के बाद: `IXSCAN`, 27 लौटाने के लिए 27 keys और 27 docs examine हुए, और कोई in-memory sort नहीं।",
+    "followUps": [
+      "ESR rule का क्या मतलब है?",
+      "Covered query क्या है?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-explain-fields",
+    "topic": "MongoDB performance",
+    "question": "explain('executionStats') में आप सबसे पहले कौन सी fields देखते हैं?",
+    "answer": "**Winning plan stage** (`IXSCAN` अच्छा, `COLLSCAN` बुरा, `SORT` stage का मतलब in-memory sort), **`nReturned`**, **`totalKeysExamined`**, **`totalDocsExamined`** और **`executionTimeMillis`**। सबसे अहम health check है **examined ÷ returned**: 1 के करीब का मतलब है index query पर fit बैठता है; सैकड़ों या हज़ारों का मतलब है MongoDB जितना लौटाता है उससे कहीं ज़्यादा पढ़ रहा है।",
+    "followUps": [
+      "queryPlanner और executionStats verbosity में क्या फ़र्क है?",
+      "totalDocsExamined: 0 का क्या मतलब है?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-profiler",
+    "topic": "MongoDB performance",
+    "question": "MongoDB में धीमी queries कैसे ढूँढते हैं?",
+    "answer": "**`slowms`** (default 100 ms) से धीमे operations profiler बंद होने पर भी **`mongod` log** में लिखे जाते हैं। **Database profiler** (`db.setProfilingLevel(1, { slowms: 100 })`) इन्हें `system.profile` में भी store करता है, जहाँ आप `planSummary: 'COLLSCAN'` जैसी चीज़ों के लिए query कर सकते हैं। Level 2 सब कुछ record करता है और production के लिए बहुत भारी है। Atlas पर Query Profiler और Performance Advisor यही data दिखाते हैं और indexes suggest करते हैं।",
+    "followUps": [
+      "Profiler का overhead कितना है?",
+      "sampleRate क्या है?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-working-set",
+    "topic": "MongoDB performance",
+    "question": "Working set क्या है, और इसे memory में fit क्यों होना चाहिए?",
+    "answer": "**Working set** वो data और indexes हैं जिन्हें आपका application नियमित रूप से access करता है। WiredTiger hot data को अपने **cache** में रखता है, जो default रूप से **50% of (RAM − 1 GB)** या **256 MB** में से जो बड़ा हो, उतना होता है। अगर working set fit होता है, तो ज़्यादातर reads memory से serve होते हैं; अगर नहीं, तो pages लगातार evict होकर disk से दोबारा पढ़े जाते हैं और latency उछल जाती है। Collection scans हालत और बिगाड़ते हैं क्योंकि वो उपयोगी data को cache से बाहर धकेल देते हैं।",
+    "followUps": [
+      "आप कैसे पता लगाएँगे कि working set fit नहीं हो रहा?",
+      "Cache को RAM का 90% क्यों नहीं set करना चाहिए?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-keyset-pagination",
+    "topic": "MongoDB performance",
+    "question": "गहरे pages के लिए skip/limit pagination धीमा क्यों है, और इसका विकल्प क्या है?",
+    "answer": "`skip(n)` छलाँग नहीं लगाता: server फिर भी **सभी n entries से होकर गुज़रता है**, इसलिए page 1,000 की कीमत page 1 से कहीं ज़्यादा है। **Keyset (range-based) pagination** आखिरी item की sort values याद रखता है और index की मदद से उसके बाद वाले items के लिए query करता है, जैसे `createdAt < last.createdAt` और tie-breaker के रूप में `_id`, इसलिए हर page की कीमत बराबर रहती है। Trade-off यह है कि \"page 37 पर jump\" नहीं होता, सिर्फ़ next/previous।",
+    "explanation": "```js\ndb.orders.find({ $or: [\n  { createdAt: { $lt: last.createdAt } },\n  { createdAt: last.createdAt, _id: { $lt: last._id } }\n] }).sort({ createdAt: -1, _id: -1 }).limit(20)\n```\nIndex `{ createdAt: -1, _id: -1 }` के साथ।",
+    "followUps": [
+      "_id tie-breaker की ज़रूरत क्यों है?",
+      "\"Previous page\" button कैसे implement करेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-regex",
+    "topic": "MongoDB performance",
+    "question": "कौन सी $regex queries index को efficiently इस्तेमाल कर सकती हैं?",
+    "answer": "सिर्फ़ **case-sensitive, anchored prefix** वाले regexes जैसे `/^Key/`, जो एक tight index range बन जाते हैं। Unanchored (`/board/`) या case-insensitive (`/^key/i`) patterns को हर index key या document check करना पड़ता है। Case-insensitive lookups के लिए `strength: 2` वाला **collation index** इस्तेमाल करें या एक lowercased field store करें; असली search के लिए text index या Atlas Search इस्तेमाल करें।",
+    "followUps": [
+      "Collation index कैसे काम करता है?",
+      "Text index vs Atlas Search?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-bulk-writes",
+    "topic": "MongoDB performance",
+    "question": "MongoDB में 10 लाख products import करने वाले job को तेज़ कैसे करेंगे?",
+    "answer": "हर document के लिए एक round trip के बजाय writes को **`insertMany` या `bulkWrite`** से batch करें, कुछ सौ से कुछ हज़ार के batches में। **`ordered: false`** इस्तेमाल करें ताकि एक खराब document (जैसे duplicate key) पूरा batch न रोके और operations parallel में चल सकें। बड़े initial load के बाद secondary indexes बनाने पर विचार करें, और write concern सोच-समझकर चुनें: `w: 'majority'` ज़्यादा सुरक्षित है, `w: 1` तेज़ है लेकिन failover पर writes खो सकता है।",
+    "followUps": [
+      "Unordered bulkWrite के errors कैसे संभालते हैं?",
+      "Indexes writes को धीमा क्यों करते हैं?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-connections",
+    "topic": "MongoDB performance",
+    "question": "Node.js app को MongoDB connections कैसे manage करने चाहिए?",
+    "answer": "Startup पर **हर process में एक `MongoClient`** बनाएँ और उसे reuse करें: यह एक **connection pool** manage करता है (driver default `maxPoolSize` 100)। हर request पर client बनाने से हर बार connection और auth की कीमत चुकानी पड़ती है और connections leak होते हैं। Pool का size पूरे fleet के हिसाब से रखें, क्योंकि 30 pods × 100 connections यानी 3,000 server connections, और हर एक server की memory लेता है।",
+    "followUps": [
+      "Serverless functions में यह कैसे बदलता है?",
+      "Pool खत्म हो जाए तो क्या होता है?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-data-growth",
+    "topic": "MongoDB performance",
+    "question": "आपके product documents बढ़ते जा रहे हैं क्योंकि हर review एक reviews array में push होता है, और product pages धीमे होते जा रहे हैं। आप क्या करेंगे, और collections को हमेशा बढ़ने से कैसे रोकेंगे?",
+    "answer": "यह **unbounded array** anti-pattern है: हर product read सारे reviews को cache और network में load करता है, और documents धीरे-धीरे **16 MB** limit की ओर बढ़ते हैं। Reviews को `{ productId: 1, createdAt: -1 }` से indexed उनकी अपनी `reviews` collection में ले जाएँ, और product पर सिर्फ़ एक **subset** (latest कुछ reviews) और `reviewCount` व `avgRating` जैसी summary fields रखें। जो data expire होना चाहिए, जैसे abandoned carts या sessions, उसके लिए **TTL index** इस्तेमाल करें; जो data रखना ज़रूरी है लेकिन कम पढ़ा जाता है, जैसे पुराने orders, उसे किसी दूसरी collection या सस्ते storage में **archive** करें और hot collection से batches में delete करें।",
+    "followUps": [
+      "TTL deletion कितना सटीक है?",
+      "avgRating को सही कैसे रखेंगे?"
+    ]
+  },
+  {
+    "slug": "mongodb-performance-monitoring",
+    "topic": "MongoDB performance",
+    "question": "Production MongoDB cluster के लिए आप कौन से metrics monitor करेंगे और किन पर alert लगाएँगे?",
+    "answer": "**Opcounters** (load), **query targeting** यानी scanned-to-returned ratio (missing indexes), **WiredTiger cache** usage और cache में पढ़े गए pages (working set vs RAM), **replication lag** (stale reads और failover का जोखिम), **connections** (pool sizing और leaks), log या profiler से **slow queries**, और disk IOPS/latency। हर metric एक fix से जुड़ता है: indexes, ज़्यादा RAM या कम data, पीछे चल रहे secondaries को ठीक करना, या connection pool को adjust करना।",
+    "followUps": [
+      "Query targeting में अचानक उछाल किस वजह से आएगा?",
+      "अगर replication lag बढ़ता ही जाए तो आप क्या check करेंगे?"
+    ]
+  }
+]

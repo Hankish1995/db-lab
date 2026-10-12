@@ -1,0 +1,95 @@
+[
+  {
+    "slug": "postgres-locking-why-locks-with-mvcc",
+    "topic": "Locking",
+    "question": "PostgreSQL MVCC इस्तेमाल करता है। फिर भी उसे locks की ज़रूरत क्यों है?",
+    "answer": "MVCC सिर्फ़ **readers और writers** के बीच के conflicts हटाता है: readers एक snapshot इस्तेमाल करते हैं और कभी wait नहीं करते। Locks फिर भी तब चाहिए जब **दो writers एक ही row को छुएँ** (दूसरा पहले का wait करता है), जब **schema changes** को बाकी सब कुछ बाहर रखना हो (`ALTER TABLE` `ACCESS EXCLUSIVE` लेता है), और **advisory locks** के ज़रिए application-level mutual exclusion के लिए।",
+    "followUps": [
+      "Plain SELECT कौन सा lock लेता है?",
+      "क्या SELECT कभी block हो सकता है?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-timeouts",
+    "topic": "Locking",
+    "question": "statement_timeout, lock_timeout और idle_in_transaction_session_timeout में क्या फ़र्क है?",
+    "answer": "**`statement_timeout`** limit से ज़्यादा चलने वाले किसी भी statement को cancel करता है, चाहे वो wait कर रहा हो या काम। **`lock_timeout`** statement को तभी cancel करता है जब वो limit से ज़्यादा देर **lock के लिए wait** करे, migrations के लिए ideal। **`idle_in_transaction_session_timeout`** उन sessions को terminate करता है जिन्होंने transaction खोला और फिर idle बैठ गए, जो वरना locks पकड़े रहते और vacuum को block करते। इन्हें हर role के लिए set करें, जैसे `ALTER ROLE shop_web SET statement_timeout = '10s'`।",
+    "followUps": [
+      "Globally बहुत बड़ा statement_timeout क्यों न set करें?",
+      "PostgreSQL 17 में transaction_timeout क्या जोड़ता है?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-row-lock-modes",
+    "topic": "Locking",
+    "question": "PostgreSQL में चार row-level lock modes कौन से हैं, और plain UPDATE कौन सा लेता है?",
+    "answer": "सबसे मज़बूत से सबसे कमज़ोर तक: **FOR UPDATE**, **FOR NO KEY UPDATE**, **FOR SHARE** और **FOR KEY SHARE**। Plain `UPDATE` **FOR NO KEY UPDATE** लेता है, जब तक वो सच में कोई key column न बदले (ऐसा column जिस पर foreign key के काम आ सकने वाला unique index हो), उस case में वो FOR UPDATE लेता है; `DELETE` FOR UPDATE लेता है। Foreign key checks parent row पर **FOR KEY SHARE** लेते हैं, जो सिर्फ़ FOR UPDATE से टकराता है, इसलिए customer के non-key columns update करने से उस customer के orders insert होना block नहीं होता।",
+    "explanation": "Verified: जब एक session ने `UPDATE customers SET country = 'IN' WHERE id = 5` uncommitted रखा, तो `INSERT INTO orders (customer_id ...) VALUES (5 ...)` तुरंत पूरा हो गया; `SELECT ... FOR UPDATE` या email change (unique column) के साथ उसने wait किया।",
+    "followUps": [
+      "FOR SHARE कब इस्तेमाल करेंगे?",
+      "User का email बदलने से order inserts block क्यों हो सकते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-skip-locked-queue",
+    "topic": "Locking",
+    "question": "PostgreSQL में ऐसी job queue कैसे बनाएँगे जिसे कई workers एक साथ consume कर सकें?",
+    "answer": "**`FOR UPDATE SKIP LOCKED`** इस्तेमाल करें: हर worker सबसे पुराना queued job select करके lock करता है, और किसी दूसरे worker की पहले से lock की हुई row को छोड़ देता है, इसलिए workers कभी एक-दूसरे के jobs का wait नहीं करते और उन्हें दो बार process नहीं करते। Atomically claim करने के लिए इसे `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING ...` में लपेटें, queued jobs पर एक partial index के साथ। फिर या तो processing के दौरान transaction पकड़े रखें (crash होने पर lock छूट जाता है), या claim को commit करें और मरे हुए workers के jobs दोबारा queue करने के लिए timeout इस्तेमाल करें।",
+    "explanation": "```sql\nUPDATE jobs SET status = 'running', attempts = attempts + 1\nWHERE id = (\n  SELECT id FROM jobs\n  WHERE status = 'queued' AND run_at <= now()\n  ORDER BY run_at, id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nRETURNING id, kind, payload;\n```",
+    "followUps": [
+      "इसकी जगह NOWAIT क्या करता है?",
+      "असली message broker पर कब switch करेंगे?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-table-lock-modes",
+    "topic": "Locking",
+    "question": "SELECT, UPDATE, CREATE INDEX और ALTER TABLE कौन से table-level locks लेते हैं, और वो किसे block करते हैं?",
+    "answer": "`SELECT` **ACCESS SHARE** लेता है, जो सिर्फ़ ACCESS EXCLUSIVE से टकराता है। `INSERT/UPDATE/DELETE` **ROW EXCLUSIVE** लेते हैं, जो table level पर आपस में compatible हैं। सामान्य `CREATE INDEX` **SHARE** लेता है: reads चलते रहते हैं पर पूरे build के दौरान **writes block** रहते हैं। ज़्यादातर `ALTER TABLE` forms, `DROP`, `TRUNCATE` और `VACUUM FULL` **ACCESS EXCLUSIVE** लेते हैं, जो plain SELECTs समेत सब कुछ block करता है। `CREATE INDEX CONCURRENTLY` और `VACUUM` SHARE UPDATE EXCLUSIVE इस्तेमाल करते हैं, जो reads या writes को block नहीं करता।",
+    "followUps": [
+      "CREATE INDEX CONCURRENTLY transaction में क्यों नहीं चल सकता?",
+      "Table locks कैसे देखते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-deadlocks",
+    "topic": "Locking",
+    "question": "PostgreSQL deadlocks को कैसे detect और resolve करता है, और आप उनसे कैसे बचते हैं?",
+    "answer": "जब कोई lock wait **`deadlock_timeout`** (default 1 s) से आगे जाता है, तो wait कर रहा session wait-for graph check करता है; अगर उसमें cycle है, तो वो एक transaction को `ERROR: deadlock detected` (SQLSTATE **40P01**) के साथ abort कर देता है और बाकी आगे बढ़ते हैं। इनसे बचने के लिए **rows को एक consistent order में lock करें** (जैसे cart के लिए `SELECT ... WHERE id = ANY($1) ORDER BY id FOR UPDATE`), transactions छोटे रखें, और victim को retry करें।",
+    "followUps": [
+      "DETAIL line में 'waits for ShareLock on transaction' क्यों लिखा होता है?",
+      "क्या आपको deadlock_timeout कम करना चाहिए?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-advisory-locks",
+    "topic": "Locking",
+    "question": "Advisory locks क्या हैं और आप उन्हें कब इस्तेमाल करेंगे?",
+    "answer": "Advisory locks **application की तय की हुई meaning वाले नाम वाले locks** हैं: PostgreSQL उन्हें किसी row या table से नहीं जोड़ता, बस एक bigint key पर mutual exclusion की गारंटी देता है। इनका आम इस्तेमाल ये पक्का करना है कि **सिर्फ़ एक replica cron job चलाए**: `SELECT pg_try_advisory_xact_lock(hashtext('nightly-invoice-job'))` ठीक एक session के लिए true लौटाता है। **Transaction-level** locks को प्राथमिकता दें, जो commit या rollback पर अपने-आप छूट जाते हैं; session-level वाले leak हो सकते हैं और PgBouncer जैसे transaction-mode pooler के पीछे टूट जाते हैं।",
+    "followUps": [
+      "pg_advisory_lock और pg_try_advisory_lock में क्या फ़र्क है?",
+      "pg_locks में advisory locks कैसे देखते हैं?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-alter-table-outage",
+    "topic": "Locking",
+    "question": "Scenario: आप एक migration deploy करते हैं जो products में एक nullable column जोड़ता है, जिसमें milliseconds लगने चाहिए, और पूरी site down हो जाती है। क्या हुआ और आप इसे कैसे रोकेंगे?",
+    "answer": "`ALTER TABLE` को **ACCESS EXCLUSIVE** चाहिए, और वो products पर ACCESS SHARE पकड़े हुए **किसी लंबी चलने वाली query या खुले transaction के पीछे wait कर रहा था**। जब तक वो lock queue में wait करता है, products पर हर नई query, एक साधारण SELECT भी, **ALTER के पीछे queue में लग जाती है**, इसलिए connections जमा होते जाते हैं और app ठप हो जाता है। इसे रोकने के लिए DDL को **`SET lock_timeout = '2s'`** और automatic retries के साथ चलाएँ, deploy से पहले `pg_stat_activity` में लंबे transactions check करें, और app roles के लिए `statement_timeout` और `idle_in_transaction_session_timeout` set करें।",
+    "explanation": "`pg_locks` + `pg_blocking_pids()` से lesson का reproduction: report (AccessShareLock, granted) ← migration (AccessExclusiveLock, waiting, report से blocked) ← checkout SELECT (AccessShareLock, waiting, migration से blocked)।",
+    "followUps": [
+      "Block करने वाला session कैसे ढूँढेंगे?",
+      "कौन से migrations online चलाना safe है?"
+    ]
+  },
+  {
+    "slug": "postgres-locking-safe-migrations",
+    "topic": "Locking",
+    "question": "एक बड़ी, busy table में बिना downtime के index, NOT NULL constraint और foreign key कैसे जोड़ेंगे?",
+    "answer": "**Index**: transaction के बाहर `CREATE INDEX CONCURRENTLY`; fail हो जाए तो INVALID index drop करके retry करें। **NOT NULL**: `CHECK (col IS NOT NULL) NOT VALID` जोड़ें, फिर `VALIDATE CONSTRAINT` (ऐसे lock के तहत scan करता है जो reads और writes होने देता है), फिर `SET NOT NULL`, जो validated check का इस्तेमाल करके scan छोड़ देता है, फिर check drop करें। **Foreign key**: इसे `NOT VALID` जोड़ें (नई rows पर तुरंत लागू), फिर बाद में `VALIDATE CONSTRAINT`। साथ ही: PostgreSQL 11 से constant column defaults सिर्फ़ metadata का change हैं, पर volatile defaults या type changes table को दोबारा लिखते हैं। ये सब `lock_timeout` के साथ चलाएँ।",
+    "followUps": [
+      "ADD COLUMN ... DEFAULT gen_random_uuid() धीमा क्यों है?",
+      "नए column को safely backfill कैसे करेंगे?"
+    ]
+  }
+]

@@ -70,6 +70,25 @@ export interface Question {
   tags: string[];
 }
 
+/** UI and content languages. English is the source; Hindi falls back to English when untranslated. */
+export const LOCALES = ['en', 'hi'] as const;
+export type Locale = (typeof LOCALES)[number];
+
+/** Hindi lesson metadata (module stays English: it groups lessons). */
+export interface LessonTranslation {
+  title: string;
+  summary: string;
+}
+
+/** Hindi text of a question; everything else (difficulty, track, tags…) comes from English. */
+export interface QuestionTranslation {
+  topic: string;
+  question: string;
+  answer: string;
+  explanation?: string;
+  followUps: string[];
+}
+
 export const PROGRESS_STATUSES = ['new', 'revise', 'known'] as const;
 export type ProgressStatus = (typeof PROGRESS_STATUSES)[number];
 

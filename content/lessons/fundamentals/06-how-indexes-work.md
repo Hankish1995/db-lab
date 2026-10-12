@@ -218,7 +218,7 @@ Assume an index exists on the column in each case.
 | `WHERE customer_id = 42 OR coupon = 'X'` | Every OR branch needs an index; one un-indexed branch forces a scan | Index both columns (PostgreSQL can combine them with a **BitmapOr**) |
 | `WHERE created_at + interval '1 day' > now()` | Arithmetic on the column | Rewrite: `created_at > now() - interval '1 day'` |
 
-Two engine-specific gotchas:
+Three engine-specific gotchas:
 
 - **PostgreSQL prefix `LIKE 'abc%'`:** a default B-tree index supports it only with the `C` collation. With other collations, create the index with `text_pattern_ops`.
 - **MongoDB regex:** a case-sensitive prefix regex like `/^Sam/` uses the index efficiently. `/sam/` or `/^sam/i` can't use it as a range, so it scans the whole index or the collection.

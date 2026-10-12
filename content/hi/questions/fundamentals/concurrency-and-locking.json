@@ -1,0 +1,61 @@
+[
+  {
+    "slug": "concurrency-and-locking-race-condition",
+    "topic": "Concurrency",
+    "question": "दो users एक ही समय पर आख़िरी item खरीदते हैं और दोनों orders सफल हो जाते हैं। क्या गलत हुआ?",
+    "answer": "यह एक **race condition** है, ख़ास तौर पर **lost update**: दोनों requests ने `stock = 1` **read** किया, दोनों application code में check पास कर गईं, और दोनों ने `stock = 0` **write** किया, इसलिए एक decrement ने दूसरे को overwrite कर दिया। Read-check-write वाला sequence atomic नहीं था। सबसे आसान fix एक single conditional update है: `UPDATE products SET stock = stock - 1 WHERE id = ? AND stock > 0`, और 0 updated rows को sold out मानिए।",
+    "followUps": ["Read committed पर इसे transaction में wrap करने से यह ठीक क्यों नहीं होता?", "MongoDB में आप यही कैसे करेंगे?"]
+  },
+  {
+    "slug": "concurrency-and-locking-anomalies",
+    "topic": "Isolation",
+    "question": "Dirty read, non-repeatable read और phantom read समझाइए।",
+    "answer": "**Dirty read** का मतलब है किसी दूसरे transaction का **uncommitted** change पढ़ना, जो rollback भी हो सकता है। **Non-repeatable read** का मतलब है एक transaction में **एक ही row को दो बार** पढ़ना और अलग values मिलना, क्योंकि बीच में किसी ने update commit कर दिया। **Phantom read** का मतलब है **एक ही query दो बार** चलाना और **rows का अलग set** मिलना, क्योंकि किसी ने matching rows insert या delete कर दीं। हर ज़्यादा strict isolation level इनमें से और ज़्यादा को हटा देता है।",
+    "followUps": ["कौन-सा isolation level इनमें से किसे रोकता है?", "Write skew क्या है और standard levels में उसका ज़िक्र क्यों नहीं है?"]
+  },
+  {
+    "slug": "concurrency-and-locking-isolation-levels-postgres",
+    "topic": "Isolation",
+    "question": "SQL isolation levels कौन-से हैं, और PostgreSQL उन्हें standard से अलग कैसे implement करता है?",
+    "answer": "Standard चार levels define करता है: **read uncommitted, read committed, repeatable read और serializable**, जो क्रम से dirty reads, non-repeatable reads और phantoms को रोकते जाते हैं। PostgreSQL ज़्यादा strict है: read uncommitted **read committed** (इसका default) की तरह behave करता है, इसलिए dirty reads कभी नहीं होते; **repeatable read** असल में **snapshot isolation** है, जो phantoms भी रोकता है और उसी row पर concurrent updates होने पर error देता है; **serializable** **SSI** इस्तेमाल करता है, जो conflict करने वाले transactions में से एक को abort करके write skew भी रोकता है। ऊँचे levels पर आपकी application को serialization failures (SQLSTATE `40001`) पर **retry** करना ही होगा।",
+    "followUps": ["MySQL InnoDB का default isolation level क्या है?", "Snapshot isolation में write skew अब भी क्यों हो सकता है?"]
+  },
+  {
+    "slug": "concurrency-and-locking-write-skew",
+    "topic": "Isolation",
+    "question": "Write skew क्या है? एक e-commerce उदाहरण दीजिए और बताइए कि इसे कैसे रोकें।",
+    "answer": "Write skew तब होता है जब दो transactions **एक ही data पढ़ते हैं**, हर एक उसके आधार पर फ़ैसला लेता है, और वे **अलग-अलग rows** लिखते हैं, जिससे दोनों मिलकर एक ऐसा नियम तोड़ देते हैं जिसे अकेले में हर एक मान रहा था। उदाहरण: \"हर customer के लिए एक WELCOME coupon\": दो tabs दोनों redemptions गिनते हैं (0) और दोनों एक-एक insert कर देते हैं। Row locks यहाँ मदद नहीं करते क्योंकि conflict करने वाली rows अभी exist ही नहीं करतीं। इसे एक **constraint** (`UNIQUE (customer_id, code)`) से, retries के साथ **serializable** isolation level से, या check करने से पहले किसी shared row को lock करके (जैसे customer row को `FOR UPDATE`) रोकिए।",
+    "followUps": ["क्या PostgreSQL का repeatable read इसे रोकता है?"]
+  },
+  {
+    "slug": "concurrency-and-locking-pessimistic-vs-optimistic",
+    "topic": "Locking",
+    "question": "Pessimistic बनाम optimistic locking: ये कैसे काम करते हैं और आप कब कौन-सा इस्तेमाल करते हैं?",
+    "answer": "**Pessimistic** locking काम शुरू करने से पहले lock लेता है (`SELECT ... FOR UPDATE`), इसलिए दूसरे transactions **इंतज़ार करते हैं**; यह **high contention** के लिए सही है, जैसे flash-sale वाला item। **Optimistic** locking कोई lock नहीं लेता: एक **version** पढ़िए, फिर `WHERE id = ? AND version = ?` के साथ update कीजिए, और अगर 0 rows बदलीं तो कोई और जीत गया और आप **retry** करते हैं; यह **कम conflicts** और HTTP requests के पार फैली edits के लिए सही है। Hot row पर optimistic retry storms पैदा करता है; cold data पर pessimistic बेवजह का waiting और deadlock risk जोड़ता है।",
+    "explanation": "```sql\nUPDATE products\nSET stock = 4, version = version + 1\nWHERE product_id = 1 AND version = 7;  -- 0 rows = conflict\n```\nMongoose में schema option `optimisticConcurrency: true` से `save()` filter में `__v` शामिल करता है और conflict पर `VersionError` throw करता है (यह `updateOne`/`findOneAndUpdate` पर लागू नहीं होता)।",
+    "followUps": ["FOR UPDATE NOWAIT और SKIP LOCKED क्या करते हैं?", "Mongoose का default versioning optimisticConcurrency से कैसे अलग है?"]
+  },
+  {
+    "slug": "concurrency-and-locking-mongodb-atomic-decrement",
+    "topic": "MongoDB",
+    "question": "MongoDB में overselling के बिना stock को safely कैसे घटाएँ?",
+    "answer": "एक single **atomic, conditional** `updateOne` इस्तेमाल कीजिए: product **और** पर्याप्त stock पर filter लगाइए, और `$inc` से घटाइए। Single-document writes atomic होते हैं, इसलिए दो concurrent खरीदार दोनों आख़िरी unit से match नहीं कर सकते; `modifiedCount` check कीजिए और 0 को sold out मानिए। अगर आप एक order document भी बनाते हैं, तो दोनों writes को एक **transaction** (`session.withTransaction`) में रखिए ताकि दोनों साथ में सफल या fail हों।",
+    "explanation": "```js\nconst res = db.products.updateOne(\n  { _id: 1, stock: { $gte: 2 } },\n  { $inc: { stock: -2 } }\n)\n// res.modifiedCount === 0 -> not enough stock\n```",
+    "followUps": ["यहाँ findOne के बाद save() करना unsafe क्यों है?", "जब दो MongoDB transactions एक ही document पर write करते हैं तो क्या होता है?"]
+  },
+  {
+    "slug": "concurrency-and-locking-deadlocks",
+    "topic": "Deadlocks",
+    "question": "Deadlock क्या है, database इसे कैसे संभालता है, और आप इससे कैसे बचते हैं?",
+    "answer": "Deadlock **इंतज़ार का एक cycle** है: T1 के पास वो lock है जो T2 को चाहिए, और T2 के पास वो lock है जो T1 को चाहिए, जैसे दो carts जो Mouse और Keyboard को उल्टे क्रम में lock करते हैं। PostgreSQL तब cycles check करता है जब lock का इंतज़ार `deadlock_timeout` (default 1 second) से ज़्यादा हो जाए, और `deadlock detected` (SQLSTATE `40P01`) के साथ **एक transaction को abort कर देता है**। इनसे बचने के लिए: **consistent lock order** (lock करने से पहले product IDs sort कीजिए), अंदर बिना external calls वाले **छोटे transactions**, atomic statements से कम locks, और victim के लिए **retry** logic।",
+    "followUps": ["सावधानी से लिखे code में भी deadlocks क्यों होते हैं?"]
+  },
+  {
+    "slug": "concurrency-and-locking-scenario-flash-sale",
+    "topic": "Concurrency",
+    "question": "Scenario: आप एक flash sale के लिए checkout design कर रहे हैं जहाँ 10,000 users एक ही product पर आते हैं। आप overselling कैसे रोकेंगे और इसे तेज़ कैसे रखेंगे?",
+    "answer": "मैं stock decrement को एक **single atomic conditional statement** बनाऊँगा (`UPDATE ... SET stock = stock - :qty WHERE id = :id AND stock >= :qty`, या MongoDB में `$inc` और `stock: { $gte: qty }` filter वाला `updateOne`), जो order insert के साथ एक **छोटे transaction** में हो, और safety net के तौर पर `CHECK (stock >= 0)` constraint जोड़ूँगा। Optimistic locking एक hot row पर retry storm पैदा करेगा, और payment gateway call करते समय `FOR UPDATE` पकड़े रखने से सब queue में लग जाएँगे, इसलिए payment stock reserve करने के **बाद** होगा, एक timeout के साथ जो reservation छोड़ दे। अगर single row bottleneck बन जाए, तो मैं purchase requests को queue करूँगा या stock को कई bucket rows में बाँट दूँगा।",
+    "explanation": "```sql\nBEGIN;\nUPDATE products SET stock = stock - 1\nWHERE product_id = 1 AND stock >= 1;\n-- 0 rows -> ROLLBACK, sold out\nINSERT INTO orders (customer_id, product_id, qty, status)\nVALUES (7, 1, 1, 'reserved');\nCOMMIT;\n```\nRead committed पर यह safe है क्योंकि दूसरा UPDATE row lock का इंतज़ार करता है, फिर committed row पर WHERE clause को दोबारा evaluate करता है।",
+    "followUps": ["Unpaid orders के reservations आप कैसे release करेंगे?", "क्या आप यहाँ isolation level को serializable तक बढ़ाएँगे?"]
+  }
+]

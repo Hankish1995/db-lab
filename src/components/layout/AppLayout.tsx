@@ -1,10 +1,13 @@
 import { Outlet, ScrollRestoration } from 'react-router';
 import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+import { useT } from '@/i18n/locale';
 import { AppSidebar } from './AppSidebar';
+import { LanguageToggle } from './LanguageToggle';
 import { ThemeToggle } from './ThemeToggle';
 
 export function AppLayout() {
+  const t = useT();
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -13,8 +16,9 @@ export function AppLayout() {
         <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
-          <span className="text-sm font-medium text-muted-foreground">Learn it once. Remember it forever.</span>
-          <div className="ml-auto">
+          <span className="hidden truncate text-sm font-medium text-muted-foreground sm:block">{t.app.tagline}</span>
+          <div className="ml-auto flex items-center gap-2">
+            <LanguageToggle />
             <ThemeToggle />
           </div>
         </header>
